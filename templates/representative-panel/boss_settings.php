@@ -6,7 +6,7 @@
  * @subpackage Insurance_CRM/templates/representative-panel
  * @author     Anadolu Birlik
  * @since      1.0.0
- * @version    1.0.0 (2025-05-28)
+ * @version    1.0.1 (2025-05-28)
  */
 
 if (!defined('ABSPATH')) {
@@ -20,35 +20,6 @@ if (!is_user_logged_in()) {
 
 $current_user = wp_get_current_user();
 global $wpdb;
-
-// Kullanıcı rolünü kontrol et
-function get_user_role_in_hierarchy($user_id) {
-    global $wpdb;
-    $table_reps = $wpdb->prefix . 'insurance_crm_representatives';
-    
-    $role = $wpdb->get_var($wpdb->prepare(
-        "SELECT role FROM {$table_reps} WHERE user_id = %d",
-        $user_id
-    ));
-    
-    if ($role === null) {
-        return '';
-    }
-    
-    $role_map = array(
-        1 => 'patron',
-        2 => 'manager',
-        3 => 'assistant_manager',
-        4 => 'team_leader',
-        5 => 'representative'
-    );
-    
-    return isset($role_map[$role]) ? $role_map[$role] : 'representative';
-}
-
-function is_patron($user_id) {
-    return get_user_role_in_hierarchy($user_id) === 'patron';
-}
 
 // Yetki kontrolü - sadece patron ayarlara erişebilir
 if (!is_patron($current_user->ID)) {
@@ -75,7 +46,7 @@ if (!isset($settings['default_policy_types'])) {
     $settings['default_policy_types'] = array('Kasko', 'Trafik', 'Konut', 'DASK', 'Sağlık');
 }
 if (!isset($settings['insurance_companies'])) {
-    $settings['insurance_companies'] = array('Allianz', 'Anadolu Sigorta', 'AXA', 'Axa Sigorta', 'Acıbadem', 'Ankara Sigorta', 'Groupama', 'Güneş Sigorta', 'HDI', 'Mapfre', 'Sompo Japan', 'Türkiye Sigorta', 'Unico Sigorta');
+    $settings['insurance_companies'] = array('Allianz', 'Anadolu Sigorta', 'AXA', 'Axa Sigorta', 'Acıbadem', 'Ankara Sigorta', 'Groupama', 'Güneş Sigorta', 'HDI', 'Mapfre', 'Sompo Japan', 'Türkiye Sigorta');
 }
 if (!isset($settings['default_task_types'])) {
     $settings['default_task_types'] = array('Telefon Görüşmesi', 'Yüz Yüze Görüşme', 'Teklif Hazırlama', 'Evrak İmza', 'Dosya Takibi');
@@ -991,4 +962,3 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 });
 </script>
-                            
