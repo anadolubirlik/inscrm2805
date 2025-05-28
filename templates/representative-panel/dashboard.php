@@ -2391,7 +2391,7 @@ if (!$representative) {
     echo '<div class="ab-notice ab-error">Müşteri temsilcisi kaydınız bulunamadı veya hesabınız pasif durumda.</div>';
 } else {
     // Görev özeti widget'ını dahil et
-    include_once dirname(__FILE__) . '/modules/task-management/task-summary-widget.php';
+    include_once dirname(__FILE__) . '/tasks-dashboard-widget.php';
 }
 ?>                   
 
