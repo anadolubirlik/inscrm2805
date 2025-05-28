@@ -596,7 +596,7 @@ $policy_achievement_rate = ($team_policy_target > 0 && $new_policies > 0) ?
 $policy_achievement_rate = min(100, $policy_achievement_rate);
 
 $recent_policies = $wpdb->get_results($wpdb->prepare(
-    "SELECT p.*, c.first_name, c.last_name, c.gender
+    "SELECT p.*, c.first_name, c.last_name
      FROM {$wpdb->prefix}insurance_crm_policies p
      LEFT JOIN {$wpdb->prefix}insurance_crm_customers c ON p.customer_id = c.id
      WHERE p.representative_id IN (" . implode(',', array_fill(0, count($rep_ids), '%d')) . ")
@@ -650,7 +650,7 @@ if ($wpdb->last_error) {
 }
 
 $upcoming_renewals = $wpdb->get_results($wpdb->prepare(
-    "SELECT p.*, c.first_name, c.last_name, c.gender
+    "SELECT p.*, c.first_name, c.last_name 
      FROM {$wpdb->prefix}insurance_crm_policies p
      LEFT JOIN {$wpdb->prefix}insurance_crm_customers c ON p.customer_id = c.id
      WHERE p.representative_id IN (" . implode(',', array_fill(0, count($rep_ids), '%d')) . ") 
@@ -662,7 +662,7 @@ $upcoming_renewals = $wpdb->get_results($wpdb->prepare(
 ));
 
 $expired_policies = $wpdb->get_results($wpdb->prepare(
-    "SELECT p.*, c.first_name, c.last_name, c.gender
+    "SELECT p.*, c.first_name, c.last_name 
      FROM {$wpdb->prefix}insurance_crm_policies p
      LEFT JOIN {$wpdb->prefix}insurance_crm_customers c ON p.customer_id = c.id
      WHERE p.representative_id IN (" . implode(',', array_fill(0, count($rep_ids), '%d')) . ") 
@@ -912,60 +912,6 @@ if ($user_role == 'patron' || $user_role == 'manager') {
     usort($all_representatives_performance, function($a, $b) {
         return $b['total_premium'] <=> $a['total_premium'];
     });
-    
-    // Patron için en iyi 3 performans verisi
-    if ($user_role == 'patron') {
-        // En Çok Üretim Yapan
-        $top_producers = $all_representatives_performance;
-        usort($top_producers, function($a, $b) {
-            return $b['total_premium'] <=> $a['total_premium'];
-        });
-        $top_producers = array_slice($top_producers, 0, 3);
-        
-        // En Çok Yeni İş
-        $top_new_businesses = $all_representatives_performance;
-        usort($top_new_businesses, function($a, $b) {
-            return $b['current_month_premium'] <=> $a['current_month_premium'];
-        });
-        $top_new_businesses = array_slice($top_new_businesses, 0, 3);
-        
-        // En Çok Yeni Müşteri
-        $top_new_customers = [];
-        foreach ($all_representatives as $rep) {
-            $new_customers_count = $wpdb->get_var($wpdb->prepare(
-                "SELECT COUNT(*) FROM {$wpdb->prefix}insurance_crm_customers
-                 WHERE representative_id = %d 
-                 AND created_at BETWEEN %s AND %s",
-                $rep->id, date('Y-m-01 00:00:00'), date('Y-m-t 23:59:59')
-            )) ?: 0;
-            
-            $customers_count = $wpdb->get_var($wpdb->prepare(
-                "SELECT COUNT(*) FROM {$wpdb->prefix}insurance_crm_customers
-                 WHERE representative_id = %d",
-                $rep->id
-            )) ?: 0;
-            
-            $top_new_customers[] = [
-                'id' => $rep->id,
-                'name' => $rep->display_name,
-                'title' => $rep->title,
-                'new_customers' => $new_customers_count,
-                'total_customers' => $customers_count
-            ];
-        }
-        
-        usort($top_new_customers, function($a, $b) {
-            return $b['new_customers'] <=> $a['new_customers'];
-        });
-        $top_new_customers = array_slice($top_new_customers, 0, 3);
-        
-        // En Çok İptali Olan
-        $top_cancellations = $all_representatives_performance;
-        usort($top_cancellations, function($a, $b) {
-            return $b['cancelled_policies'] <=> $a['cancelled_policies'];
-        });
-        $top_cancellations = array_slice($top_cancellations, 0, 3);
-    }
 }
 
 $search_results = array();
@@ -1073,7 +1019,6 @@ function insurance_crm_rep_panel_scripts() {
     <meta charset="<?php bloginfo('charset'); ?>">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js"></script>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css" integrity="sha512-1ycn6IcaQQ40/MKBW2W4Rhis/DbILU74C1vSrLJxCq57o941Ym01SwNsOMqvEBFlcgUa6xLiPY/NS5R+E6ztJQ==" crossorigin="anonymous" referrerpolicy="no-referrer" />
     <?php wp_head(); ?>
 </head>
 
@@ -1163,21 +1108,17 @@ function insurance_crm_rep_panel_scripts() {
                     <span>Organizasyon Yönetimi</span>
                 </a>
                 <div class="submenu-items">
-                    <a href="<?php echo generate_panel_url('all_personnel'); ?>" class="<?php echo $current_view == 'all_personnel' ? 'active' : ''; ?>">
+                    <a href="<?php echo generate_panel_url('all_teams'); ?>" class="<?php echo $current_view == 'all_teams' ? 'active' : ''; ?>">
                         <i class="dashicons dashicons-groups"></i>
-                        <span>Tüm Personel</span>
+                        <span>Tüm Ekipler</span>
                     </a>
-                    <a href="<?php echo generate_panel_url('team_add'); ?>" class="<?php echo $current_view == 'team_add' ? 'active' : ''; ?>">
-                        <i class="dashicons dashicons-groups"></i>
-                        <span>Yeni Ekip Oluştur</span>
+                    <a href="<?php echo generate_panel_url('all_representatives'); ?>" class="<?php echo $current_view == 'all_representatives' ? 'active' : ''; ?>">
+                        <i class="dashicons dashicons-businessperson"></i>
+                        <span>Tüm Temsilciler</span>
                     </a>
-                    <a href="<?php echo generate_panel_url('representative_add'); ?>" class="<?php echo $current_view == 'representative_add' ? 'active' : ''; ?>">
+                    <a href="<?php echo admin_url('admin.php?page=insurance-crm-representatives'); ?>" class="<?php echo $current_view == 'admin_panel' ? 'active' : ''; ?>">
                         <i class="dashicons dashicons-admin-users"></i>
-                        <span>Yeni Temsilci Ekle</span>
-                    </a>
-                    <a href="<?php echo generate_panel_url('boss_settings'); ?>" class="<?php echo $current_view == 'boss_settings' ? 'active' : ''; ?>">
-                        <i class="dashicons dashicons-admin-generic"></i>
-                        <span>Yönetim Ayarları</span>
+                        <span>Yönetim Paneli</span>
                     </a>
                 </div>
             </div>
@@ -1191,9 +1132,9 @@ function insurance_crm_rep_panel_scripts() {
                     <span>Müdür Paneli</span>
                 </a>
                 <div class="submenu-items">
-                    <a href="<?php echo generate_panel_url('all_personnel'); ?>" class="<?php echo $current_view == 'all_personnel' ? 'active' : ''; ?>">
+                    <a href="<?php echo generate_panel_url('all_teams'); ?>" class="<?php echo $current_view == 'all_teams' ? 'active' : ''; ?>">
                         <i class="dashicons dashicons-groups"></i>
-                        <span>Tüm Personel</span>
+                        <span>Tüm Ekipler</span>
                     </a>
                     <a href="<?php echo generate_panel_url('team_leaders'); ?>" class="<?php echo $current_view == 'team_leaders' ? 'active' : ''; ?>">
                         <i class="dashicons dashicons-businessperson"></i>
@@ -1289,14 +1230,11 @@ function insurance_crm_rep_panel_scripts() {
                         case 'organization':
                             echo 'Organizasyon Yönetimi';
                             break;
-                        case 'all_personnel':
-                            echo 'Tüm Personel';
+                        case 'all_teams':
+                            echo 'Tüm Ekipler';
                             break;
-                        case 'representative_add':
-                            echo 'Yeni Temsilci Ekle';
-                            break;
-                        case 'team_add':
-                            echo 'Yeni Ekip Oluştur';
+                        case 'all_representatives':
+                            echo 'Tüm Temsilciler';
                             break;
                         case 'manager_dashboard':
                             echo 'Müdür Paneli';
@@ -1315,9 +1253,6 @@ function insurance_crm_rep_panel_scripts() {
                             break;
                         case 'edit_team':
                             echo 'Ekip Düzenle';
-                            break;
-                        case 'boss_settings':
-                            echo 'Yönetim Ayarları';
                             break;
                         default:
                             echo ($user_role == 'patron') ? 'Patron Dashboard' : 
@@ -1526,98 +1461,12 @@ function insurance_crm_rep_panel_scripts() {
                 </div>
             </div>
             
-            <!-- Patron için 4 yeni performans panel -->
-            <div class="stats-grid">
-                <div class="stat-box top-producers-box">
-                    <div class="stat-icon">
-                        <i class="fas fa-trophy"></i>
-                    </div>
-                    <div class="stat-details">
-                        <div class="stat-title">En Çok Üretim Yapan</div>
-                    </div>
-                    <div class="top-performers">
-                        <?php foreach ($top_producers as $index => $producer): ?>
-                        <div class="top-performer">
-                            <div class="rank">#<?php echo $index + 1; ?></div>
-                            <div class="performer-info">
-                                <div class="performer-name"><?php echo esc_html($producer['name']); ?></div>
-                                <div class="performer-value">₺<?php echo number_format($producer['total_premium'], 2, ',', '.'); ?></div>
-                            </div>
-                        </div>
-                        <?php endforeach; ?>
-                    </div>
-                </div>
-                
-                <div class="stat-box top-new-business-box">
-                    <div class="stat-icon">
-                        <i class="fas fa-rocket"></i>
-                    </div>
-                    <div class="stat-details">
-                        <div class="stat-title">En Çok Yeni İş</div>
-                    </div>
-                    <div class="top-performers">
-                        <?php foreach ($top_new_businesses as $index => $business): ?>
-                        <div class="top-performer">
-                            <div class="rank">#<?php echo $index + 1; ?></div>
-                            <div class="performer-info">
-                                <div class="performer-name"><?php echo esc_html($business['name']); ?></div>
-                                <div class="performer-value">₺<?php echo number_format($business['current_month_premium'], 2, ',', '.'); ?></div>
-                            </div>
-                        </div>
-                        <?php endforeach; ?>
-                    </div>
-                </div>
-                
-                <div class="stat-box top-new-customers-box">
-                    <div class="stat-icon">
-                        <i class="fas fa-user-plus"></i>
-                    </div>
-                    <div class="stat-details">
-                        <div class="stat-title">En Çok Yeni Müşteri</div>
-                    </div>
-                    <div class="top-performers">
-                        <?php foreach ($top_new_customers as $index => $customer): ?>
-                        <div class="top-performer">
-                            <div class="rank">#<?php echo $index + 1; ?></div>
-                            <div class="performer-info">
-                                <div class="performer-name"><?php echo esc_html($customer['name']); ?></div>
-                                <div class="performer-value"><?php echo $customer['new_customers']; ?> müşteri</div>
-                            </div>
-                        </div>
-                        <?php endforeach; ?>
-                    </div>
-                </div>
-                
-                <div class="stat-box top-cancellations-box">
-                    <div class="stat-icon">
-                        <i class="fas fa-exclamation-triangle"></i>
-                    </div>
-                    <div class="stat-details">
-                        <div class="stat-title">En Çok İptali Olan</div>
-                    </div>
-                    <div class="top-performers">
-                        <?php foreach ($top_cancellations as $index => $cancellation): ?>
-                        <div class="top-performer">
-                            <div class="rank">#<?php echo $index + 1; ?></div>
-                            <div class="performer-info">
-                                <div class="performer-name"><?php echo esc_html($cancellation['name']); ?></div>
-                                <div class="performer-value"><?php echo $cancellation['cancelled_policies']; ?> iptal</div>
-                            </div>
-                        </div>
-                        <?php endforeach; ?>
-                    </div>
-                </div>
-            </div>
-            
             <!-- PATRON - Ekip Performans Tablosu -->
             <div class="dashboard-card team-performance-card">
                 <div class="card-header">
                     <h3>Ekip Performansları</h3>
                     <div class="card-actions">
-                        <a href="<?php echo generate_panel_url('all_personnel'); ?>" class="text-button">Tüm Personel</a>
-                        <a href="<?php echo generate_panel_url('team_add'); ?>" class="card-option" title="Yeni Ekip">
-                            <i class="dashicons dashicons-plus-alt"></i>
-                        </a>
+                        <a href="<?php echo generate_panel_url('all_teams'); ?>" class="text-button">Tüm Ekipler</a>
                     </div>
                 </div>
                 <div class="card-body">
@@ -1670,8 +1519,8 @@ function insurance_crm_rep_panel_scripts() {
                             <i class="dashicons dashicons-groups"></i>
                         </div>
                         <h4>Henüz ekip tanımlanmamış</h4>
-                        <p>Organizasyon yapısını düzenlemek için ekip oluşturun.</p>
-                        <a href="<?php echo generate_panel_url('team_add'); ?>" class="button button-primary">Yeni Ekip Oluştur</a>
+                        <p>Organizasyon yapısını düzenlemek için yönetim paneline gidin.</p>
+                        <a href="<?php echo admin_url('admin.php?page=insurance-crm-representatives&tab=teams'); ?>" class="button button-primary">Yönetim Paneline Git</a>
                     </div>
                     <?php endif; ?>
                 </div>
@@ -1682,10 +1531,7 @@ function insurance_crm_rep_panel_scripts() {
                 <div class="card-header">
                     <h3>Temsilci Performansları</h3>
                     <div class="card-actions">
-                        <a href="<?php echo generate_panel_url('all_personnel'); ?>" class="text-button">Tüm Personel</a>
-                        <a href="<?php echo generate_panel_url('representative_add'); ?>" class="card-option" title="Yeni Temsilci">
-                            <i class="dashicons dashicons-plus-alt"></i>
-                        </a>
+                        <a href="<?php echo generate_panel_url('all_representatives'); ?>" class="text-button">Tüm Temsilciler</a>
                     </div>
                 </div>
                 <div class="card-body">
@@ -1833,7 +1679,7 @@ function insurance_crm_rep_panel_scripts() {
                 <div class="card-header">
                     <h3>Ekip Performansları</h3>
                     <div class="card-actions">
-                        <a href="<?php echo generate_panel_url('all_personnel'); ?>" class="text-button">Tüm Personel</a>
+                        <a href="<?php echo generate_panel_url('all_teams'); ?>" class="text-button">Tüm Ekipler</a>
                     </div>
                 </div>
                 <div class="card-body">
@@ -2441,17 +2287,7 @@ if (!$representative) {
                                             </td>
                                             <td>
                                                 <a href="<?php echo generate_panel_url('customers', 'edit', $policy->customer_id); ?>">
-                                                    <?php 
-                                                    $gender_icon = '';
-                                                    if (isset($policy->gender)) {
-                                                        if ($policy->gender == 'male') {
-                                                            $gender_icon = '<i class="fas fa-male" style="color: #2196F3; margin-right: 5px;"></i>';
-                                                        } elseif ($policy->gender == 'female') {
-                                                            $gender_icon = '<i class="fas fa-female" style="color: #E91E63; margin-right: 5px;"></i>';
-                                                        }
-                                                    }
-                                                    echo $gender_icon . esc_html($policy->first_name . ' ' . $policy->last_name); 
-                                                    ?>
+                                                    <?php echo esc_html($policy->first_name . ' ' . $policy->last_name); ?>
                                                 </a>
                                             </td>
                                             <td class="hide-mobile"><?php echo esc_html(ucfirst($policy->policy_type)); ?></td>
@@ -2522,17 +2358,7 @@ if (!$representative) {
                                             </td>
                                             <td>
                                                 <a href="<?php echo generate_panel_url('customers', 'edit', $policy->customer_id); ?>">
-                                                    <?php 
-                                                    $gender_icon = '';
-                                                    if (isset($policy->gender)) {
-                                                        if ($policy->gender == 'male') {
-                                                            $gender_icon = '<i class="fas fa-male" style="color: #2196F3; margin-right: 5px;"></i>';
-                                                        } elseif ($policy->gender == 'female') {
-                                                            $gender_icon = '<i class="fas fa-female" style="color: #E91E63; margin-right: 5px;"></i>';
-                                                        }
-                                                    }
-                                                    echo $gender_icon . esc_html($policy->first_name . ' ' . $policy->last_name); 
-                                                    ?>
+                                                    <?php echo esc_html($policy->first_name . ' ' . $policy->last_name); ?>
                                                 </a>
                                             </td>
                                             <td class="hide-mobile"><?php echo esc_html(ucfirst($policy->policy_type)); ?></td>
@@ -2606,11 +2432,8 @@ if (!$representative) {
                                                 <div class="user-info-cell">
                                                     <div class="user-avatar-mini">
                                                         <?php 
-                                                        if (isset($policy->gender) && $policy->gender == 'female') {
-                                                            echo '<i class="fas fa-female"></i>';
-                                                        } else {
-                                                            echo '<i class="fas fa-male"></i>';
-                                                        }
+                                                        $initial = strtoupper(substr($policy->first_name, 0, 1));
+                                                        echo $initial;
                                                         ?>
                                                     </div>
                                                     <span>
@@ -2751,14 +2574,365 @@ if (!$representative) {
                     </div>
                 </div>
             </div>
-        <?php elseif ($current_view == 'representative_add'): ?>
-            <?php include_once(dirname(__FILE__) . '/representative_add.php'); ?>
-        <?php elseif ($current_view == 'team_add'): ?>
-            <?php include_once(dirname(__FILE__) . '/team_add.php'); ?>
-        <?php elseif ($current_view == 'boss_settings'): ?>
-            <?php include_once(dirname(__FILE__) . '/boss_settings.php'); ?>
-        <?php elseif ($current_view == 'all_personnel'): ?>
-            <?php include_once(dirname(__FILE__) . '/all_personnel.php'); ?>
+        <?php elseif ($current_view == 'all_teams' || $current_view == 'all_representatives' || $current_view == 'organization' || $current_view == 'manager_dashboard' || $current_view == 'team_leaders'): ?>
+            <!-- YÖNETİM SEKME İÇERİKLERİ -->
+            <div class="main-content">
+                <?php if ($current_view == 'organization'): ?>
+                <div class="dashboard-card hierarchy-card">
+                    <div class="card-header">
+                        <h3>Organizasyon Yapısı</h3>
+                    </div>
+                    <div class="card-body">
+                        <?php 
+                        // Organizasyon şeması için veri hazırlama
+                        $settings = get_option('insurance_crm_settings', []);
+                        $management_hierarchy = isset($settings['management_hierarchy']) ? $settings['management_hierarchy'] : array();
+                        
+                        $patron_data = null;
+                        $manager_data = null;
+                        
+                        if (!empty($management_hierarchy['patron_id'])) {
+                            $patron_data = $wpdb->get_row($wpdb->prepare(
+                                "SELECT r.*, u.display_name 
+                                 FROM {$wpdb->prefix}insurance_crm_representatives r 
+                                 JOIN {$wpdb->users} u ON r.user_id = u.ID 
+                                 WHERE r.id = %d",
+                                $management_hierarchy['patron_id']
+                            ));
+                        }
+                        
+                        if (!empty($management_hierarchy['manager_id'])) {
+                            $manager_data = $wpdb->get_row($wpdb->prepare(
+                                "SELECT r.*, u.display_name 
+                                 FROM {$wpdb->prefix}insurance_crm_representatives r 
+                                 JOIN {$wpdb->users} u ON r.user_id = u.ID 
+                                 WHERE r.id = %d",
+                                $management_hierarchy['manager_id']
+                            ));
+                        }
+                        ?>
+                        
+                        <div class="org-chart">
+                            <div class="org-level patron-level">
+                                <div class="org-box patron-box">
+                                    <div class="org-title">Patron</div>
+                                    <div class="org-name">
+                                        <?php echo $patron_data ? esc_html($patron_data->display_name) : '(Tanımlanmadı)'; ?>
+                                    </div>
+                                    <?php if ($patron_data): ?>
+                                    <div class="org-subtitle"><?php echo esc_html($patron_data->title); ?></div>
+                                    <?php endif; ?>
+                                </div>
+                            </div>
+                            
+                            <div class="org-connector"></div>
+                            
+                            <div class="org-level manager-level">
+                                <div class="org-box manager-box">
+                                    <div class="org-title">Müdür</div>
+                                    <div class="org-name">
+                                        <?php echo $manager_data ? esc_html($manager_data->display_name) : '(Tanımlanmadı)'; ?>
+                                    </div>
+                                    <?php if ($manager_data): ?>
+                                    <div class="org-subtitle"><?php echo esc_html($manager_data->title); ?></div>
+                                    <?php endif; ?>
+                                </div>
+                            </div>
+                            
+                            <div class="org-connector"></div>
+                            
+                            <div class="org-level team-leaders-level">
+                                <?php if (!empty($all_teams)): ?>
+                                    <?php foreach ($all_teams as $team): ?>
+                                    <div class="org-box team-leader-box">
+                                        <div class="org-title">Ekip Lideri</div>
+                                        <div class="org-name"><?php echo esc_html($team['leader_name']); ?></div>
+                                        <div class="org-subtitle"><?php echo esc_html($team['leader_title']); ?></div>
+                                        <div class="org-team-name"><?php echo esc_html($team['name']); ?> Ekibi</div>
+                                        <div class="org-team-count"><?php echo $team['member_count']; ?> Üye</div>
+                                    </div>
+                                    <?php endforeach; ?>
+                                <?php else: ?>
+                                <div class="org-box empty-box">
+                                    <div class="org-title">Henüz Ekip Tanımlanmamış</div>
+                                    <p>Ekip yapılandırması için yönetim paneline gidin.</p>
+                                </div>
+                                <?php endif; ?>
+                            </div>
+                        </div>
+                        
+                        <div class="org-actions">
+                            <a href="<?php echo admin_url('admin.php?page=insurance-crm-representatives&tab=hierarchy'); ?>" class="button button-primary">
+                                Yönetim Hiyerarşisini Düzenle
+                            </a>
+                            <a href="<?php echo admin_url('admin.php?page=insurance-crm-representatives&tab=teams'); ?>" class="button">
+                                Ekipleri Düzenle
+                            </a>
+                        </div>
+                    </div>
+                </div>
+                <?php endif; ?>
+                
+                <?php if ($current_view == 'all_teams'): ?>
+                <div class="dashboard-card teams-list-card">
+                    <div class="card-header">
+                        <h3>Tüm Ekipler</h3>
+                        <?php if ($user_role == 'patron'): ?>
+                        <div class="card-actions">
+                            <a href="<?php echo admin_url('admin.php?page=insurance-crm-representatives&tab=teams&action=new_team'); ?>" class="button button-primary">
+                                Yeni Ekip Oluştur
+                            </a>
+                        </div>
+                        <?php endif; ?>
+                    </div>
+                    <div class="card-body">
+                        <?php if (!empty($all_teams)): ?>
+                        <table class="data-table teams-table">
+                            <thead>
+                                <tr>
+                                    <th>Ekip Adı</th>
+                                    <th>Ekip Lideri</th>
+                                    <th>Üye Sayısı</th>
+                                    <th>Toplam Prim (₺)</th>
+                                    <th>Aylık Hedef (₺)</th>
+                                    <th>Bu Ay Üretim</th>
+                                    <th>İptal Poliçe (₺)</th>
+                                    <th>Net Prim (₺)</th>
+                                    <th>Gerçekleşme Oranı</th>
+                                    <th>İşlemler</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <?php foreach ($all_teams as $team): ?>
+                                <tr>
+                                    <td><?php echo esc_html($team['name']); ?></td>
+                                    <td><?php echo esc_html($team['leader_name'] . ' (' . $team['leader_title'] . ')'); ?></td>
+                                    <td><?php echo $team['member_count']; ?> üye</td>
+                                    <td class="amount-cell">₺<?php echo number_format($team['total_premium'], 2, ',', '.'); ?></td>
+                                    <td class="amount-cell">₺<?php echo number_format($team['monthly_target'], 2, ',', '.'); ?></td>
+                                    <td class="amount-cell">₺<?php echo number_format($team['month_premium'], 2, ',', '.'); ?></td>
+                                    <td class="amount-cell negative-value">₺<?php echo number_format($team['cancelled_premium'], 2, ',', '.'); ?></td>
+                                    <td class="amount-cell">₺<?php echo number_format($team['month_net_premium'], 2, ',', '.'); ?></td>
+                                    <td>
+                                        <div class="progress-mini">
+                                            <div class="progress-bar" style="width: <?php echo min(100, $team['premium_achievement']); ?>%"></div>
+                                        </div>
+                                        <div class="progress-text"><?php echo number_format($team['premium_achievement'], 2); ?>%</div>
+                                    </td>
+                                    <td>
+                                        <div class="table-actions">
+                                            <a href="<?php echo generate_team_detail_url($team['id']); ?>" class="table-action" title="Görüntüle">
+                                                <i class="dashicons dashicons-visibility"></i>
+                                            </a>
+                                            <?php if ($user_role == 'patron'): ?>
+                                            <a href="<?php echo generate_panel_url('edit_team', '', '', array('team_id' => $team['id'])); ?>" class="table-action" title="Düzenle">
+                                                <i class="dashicons dashicons-edit"></i>
+                                            </a>
+                                            <?php endif; ?>
+                                        </div>
+                                    </td>
+                                </tr>
+                                <?php endforeach; ?>
+                            </tbody>
+                        </table>
+                        <?php else: ?>
+                        <div class="empty-state">
+                            <div class="empty-icon">
+                                <i class="dashicons dashicons-groups"></i>
+                            </div>
+                            <h4>Henüz ekip tanımlanmamış</h4>
+                            <p>Organizasyon yapısını düzenlemek için yönetim paneline gidin.</p>
+                            <a href="<?php echo admin_url('admin.php?page=insurance-crm-representatives&tab=teams'); ?>" class="button button-primary">Yönetim Paneline Git</a>
+                        </div>
+                        <?php endif; ?>
+                    </div>
+                </div>
+                <?php endif; ?>
+                
+                <?php if ($current_view == 'all_representatives'): ?>
+                <div class="dashboard-card all-reps-card">
+                    <div class="card-header">
+                        <h3>Tüm Temsilciler</h3>
+                        <?php if ($user_role == 'patron'): ?>
+                        <div class="card-actions">
+                            <a href="<?php echo admin_url('admin.php?page=insurance-crm-representatives&action=new'); ?>" class="button button-primary">
+                                Yeni Temsilci Ekle
+                            </a>
+                        </div>
+                        <?php endif; ?>
+                    </div>
+                    <div class="card-body">
+                        <?php if (!empty($all_representatives_performance)): ?>
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>Temsilci Adı</th>
+                                    <th>Unvan</th>
+                                    <th>Rol</th>
+                                    <th>Aylık Hedef (₺)</th>
+                                    <th>Bu Ay (₺)</th>
+                                    <th>İptal Poliçe (₺)</th>
+                                    <th>Net Prim (₺)</th>
+                                    <th>Gerçekleşme</th>
+                                    <th>İşlemler</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <?php 
+                                // Patron ve Müdür bilgilerini al
+                                $settings = get_option('insurance_crm_settings', []);
+                                $management_hierarchy = isset($settings['management_hierarchy']) ? $settings['management_hierarchy'] : array();
+                                $patron_id = !empty($management_hierarchy['patron_id']) ? $management_hierarchy['patron_id'] : 0;
+                                $manager_id = !empty($management_hierarchy['manager_id']) ? $management_hierarchy['manager_id'] : 0;
+                                
+                                // Ekip liderleri listesi
+                                $team_leader_ids = array();
+                                foreach ($all_teams as $team) {
+                                    $team_leader_ids[] = $team['leader_id'];
+                                }
+                                
+                                foreach ($all_representatives_performance as $rep): 
+                                    // Rol belirleme
+                                    $role = '';
+                                    $role_class = '';
+                                    
+                                    if ($rep['id'] == $patron_id) {
+                                        $role = 'Patron';
+                                        $role_class = 'patron-role';
+                                    } elseif ($rep['id'] == $manager_id) {
+                                        $role = 'Müdür';
+                                        $role_class = 'manager-role';
+                                    } elseif (in_array($rep['id'], $team_leader_ids)) {
+                                        $role = 'Ekip Lideri';
+                                        $role_class = 'leader-role';
+                                    } else {
+                                        $role = 'Temsilci';
+                                        $role_class = 'rep-role';
+                                    }
+                                ?>
+                                <tr>
+                                    <td><?php echo esc_html($rep['name']); ?></td>
+                                    <td><?php echo esc_html($rep['title']); ?></td>
+                                    <td><span class="role-badge <?php echo $role_class; ?>"><?php echo $role; ?></span></td>
+                                    <td class="amount-cell">₺<?php echo number_format($rep['monthly_target'], 2, ',', '.'); ?></td>
+                                    <td class="amount-cell">₺<?php echo number_format($rep['current_month_premium'], 2, ',', '.'); ?></td>
+                                    <td class="amount-cell negative-value">₺<?php echo number_format($rep['cancelled_premium'], 2, ',', '.'); ?></td>
+                                    <td class="amount-cell">₺<?php echo number_format($rep['net_premium'], 2, ',', '.'); ?></td>
+                                    <td>
+                                        <div class="progress-mini">
+                                            <div class="progress-bar" style="width: <?php echo min(100, $rep['premium_achievement']); ?>%"></div>
+                                        </div>
+                                        <div class="progress-text"><?php echo number_format($rep['premium_achievement'], 2); ?>%</div>
+                                    </td>
+                                    <td>
+                                        <div class="table-actions">
+                                            <a href="<?php echo generate_panel_url('representative_detail', '', $rep['id']); ?>" class="table-action" title="Görüntüle">
+                                                <i class="dashicons dashicons-visibility"></i>
+                                            </a>
+                                            <?php if ($user_role == 'patron'): ?>
+                                            <a href="<?php echo generate_panel_url('edit_representative', '', $rep['id']); ?>" class="table-action" title="Düzenle">
+                                                <i class="dashicons dashicons-edit"></i>
+                                            </a>
+                                            <?php endif; ?>
+                                        </div>
+                                    </td>
+                                </tr>
+                                <?php endforeach; ?>
+                            </tbody>
+                        </table>
+                        <?php else: ?>
+                        <div class="empty-state">
+                            <p>Henüz temsilci performans verisi bulunmamaktadır.</p>
+                        </div>
+                        <?php endif; ?>
+                    </div>
+                </div>
+                <?php endif; ?>
+                
+                <?php if ($current_view == 'manager_dashboard' || $current_view == 'team_leaders'): ?>
+                <!-- Müdür için ekip liderlerini gösterme -->
+                <div class="dashboard-card team-leaders-card">
+                    <div class="card-header">
+                        <h3>Ekip Liderleri</h3>
+                    </div>
+                    <div class="card-body">
+                        <?php
+                        // Ekip liderleri listesi ve performansları
+                        $team_leaders = array();
+                        foreach ($all_teams as $team) {
+                            foreach ($member_performance as $member) {
+                                if ($member['id'] == $team['leader_id']) {
+                                    $team_leaders[] = array(
+                                        'id' => $member['id'],
+                                        'name' => $member['name'],
+                                        'title' => $member['title'],
+                                        'team_name' => $team['name'],
+                                        'team_size' => $team['member_count'],
+                                        'monthly_target' => $member['monthly_target'],
+                                        'this_month_premium' => $member['this_month_premium'],
+                                        'premium_achievement_rate' => $member['premium_achievement_rate'],
+                                        'target_policy_count' => $member['target_policy_count'],
+                                        'this_month_policies' => $member['this_month_policies'],
+                                        'policy_achievement_rate' => $member['policy_achievement_rate']
+                                    );
+                                    break;
+                                }
+                            }
+                        }
+                        
+                        if (!empty($team_leaders)):
+                        ?>
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>Ekip Lideri</th>
+                                    <th>Unvan</th>
+                                    <th>Ekip Adı</th>
+                                    <th>Ekip Boyutu</th>
+                                    <th>Aylık Hedef (₺)</th>
+                                    <th>Bu Ay (₺)</th>
+                                    <th>Gerçekleşme</th>
+                                    <th>İşlemler</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <?php foreach ($team_leaders as $leader): ?>
+                                <tr>
+                                    <td><?php echo esc_html($leader['name']); ?></td>
+                                    <td><?php echo esc_html($leader['title']); ?></td>
+                                    <td><?php echo esc_html($leader['team_name']); ?></td>
+                                    <td><?php echo $leader['team_size']; ?> üye</td>
+                                    <td class="amount-cell">₺<?php echo number_format($leader['monthly_target'], 2, ',', '.'); ?></td>
+                                    <td class="amount-cell">₺<?php echo number_format($leader['this_month_premium'], 2, ',', '.'); ?></td>
+                                    <td>
+                                        <div class="progress-mini">
+                                            <div class="progress-bar" style="width: <?php echo min(100, $leader['premium_achievement_rate']); ?>%"></div>
+                                        </div>
+                                        <div class="progress-text"><?php echo number_format($leader['premium_achievement_rate'], 2); ?>%</div>
+                                    </td>
+                                    <td>
+                                        <a href="<?php echo generate_panel_url('representative_detail', '', $leader['id']); ?>" class="action-button view-button">
+                                            <i class="dashicons dashicons-visibility"></i>
+                                            <span>Detay</span>
+                                        </a>
+                                    </td>
+                                </tr>
+                                <?php endforeach; ?>
+                            </tbody>
+                        </table>
+                        <?php else: ?>
+                        <div class="empty-state">
+                            <div class="empty-icon">
+                                <i class="dashicons dashicons-businessperson"></i>
+                            </div>
+                            <h4>Henüz ekip lideri tanımlanmamış</h4>
+                            <p>Ekip yapılandırması için yönetim paneline gidin.</p>
+                        </div>
+                        <?php endif; ?>
+                    </div>
+                </div>
+                <?php endif; ?>
+            </div>
         <?php elseif ($current_view == 'representative_detail' || $current_view == 'team_detail'): ?>
             <?php 
             if ($current_view == 'representative_detail') {
@@ -2781,11 +2955,12 @@ if (!$representative) {
             <?php include_once(dirname(__FILE__) . '/reports.php'); ?>
         <?php elseif ($current_view == 'settings'): ?>
             <?php include_once(dirname(__FILE__) . '/settings.php'); ?>
-        <?php elseif ($current_view == 'notifications'): ?>
-            <?php include_once(dirname(__FILE__) . '/notifications.php'); ?>
-        <?php elseif ($current_view == 'iceri_aktarim'): ?>
-            <?php include_once(dirname(__FILE__) . '/iceri_aktarim.php'); ?>
-        <?php endif; ?>
+        	
+	<?php elseif ($current_view == 'notifications'): ?>
+ <?php include_once(dirname(__FILE__) . '/notifications.php'); ?>
+<?php elseif ($current_view == 'iceri_aktarim'): ?>
+ <?php include_once(dirname(__FILE__) . '/iceri_aktarim.php'); ?>
+<?php endif; ?>
 
         <style>
             .insurance-crm-page * {
@@ -3241,7 +3416,7 @@ if (!$representative) {
                 border-radius: 4px;
                 font-weight: 500;
                 cursor: pointer;
-                transition: all 0.2s ease;
+                transition: all 0.2s;
             }
             
             .quick-add-btn:hover {
@@ -3340,7 +3515,7 @@ if (!$representative) {
                 justify-content: center;
             }
             
-            .stat-icon .dashicons, .stat-icon .fas {
+            .stat-icon .dashicons {
                 font-size: 24px;
                 color: white;
             }
@@ -3361,22 +3536,6 @@ if (!$representative) {
                 background: linear-gradient(135deg, #536976, #292E49);
             }
             
-            .top-producers-box .stat-icon {
-                background: linear-gradient(135deg, #FF416C, #FF4B2B);
-            }
-            
-            .top-new-business-box .stat-icon {
-                background: linear-gradient(135deg, #6a11cb, #2575fc);
-            }
-            
-            .top-new-customers-box .stat-icon {
-                background: linear-gradient(135deg, #00b09b, #96c93d);
-            }
-            
-            .top-cancellations-box .stat-icon {
-                background: linear-gradient(135deg, #e44d26, #f16529);
-            }
-            
             .stat-details {
                 margin-bottom: 15px;
             }
@@ -3391,72 +3550,6 @@ if (!$representative) {
             .stat-label {
                 font-size: 14px;
                 color: #666;
-            }
-            
-            .stat-title {
-                font-size: 16px;
-                font-weight: 600;
-                color: #333;
-                margin-bottom: 15px;
-            }
-            
-            .top-performers {
-                display: flex;
-                flex-direction: column;
-                gap: 10px;
-            }
-            
-            .top-performer {
-                display: flex;
-                align-items: center;
-                padding: 8px 10px;
-                background: #f8f9fa;
-                border-radius: 6px;
-            }
-            
-            .rank {
-                width: 24px;
-                height: 24px;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                border-radius: 50%;
-                font-size: 12px;
-                font-weight: bold;
-                margin-right: 10px;
-            }
-            
-            .top-performer:nth-child(1) .rank {
-                background-color: #ffd700;
-                color: #333;
-            }
-            
-            .top-performer:nth-child(2) .rank {
-                background-color: #c0c0c0;
-                color: #333;
-            }
-            
-            .top-performer:nth-child(3) .rank {
-                background-color: #cd7f32;
-                color: #fff;
-            }
-            
-            .performer-info {
-                flex: 1;
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-            }
-            
-            .performer-name {
-                font-size: 14px;
-                font-weight: 500;
-            }
-            
-            .performer-value {
-                font-size: 13px;
-                font-weight: 600;
-                color: #0073aa;
             }
             
             .stat-change {
@@ -4020,10 +4113,6 @@ if (!$representative) {
                 background: #f8d7da;
             }
             
-            .text-warning {
-                color: #ffc107;
-            }
-            
             .empty-state {
                 text-align: center;
                 padding: 30px;
@@ -4162,308 +4251,314 @@ if (!$representative) {
                 }
             }
 
-            /* Görev özetleri için stil */
-            .tasks-summary-grid {
-                display: grid;
-                grid-template-columns: repeat(4, 1fr);
-                gap: 15px;
-                margin-bottom: 25px;
-            }
 
-            .task-summary-card {
-                background: #fff;
-                border-radius: 10px;
-                padding: 20px;
-                box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-                display: flex;
-                flex-direction: column;
-                position: relative;
-                overflow: hidden;
-                transition: transform 0.3s ease, box-shadow 0.3s ease;
-            }
 
-            .task-summary-card:hover {
-                transform: translateY(-3px);
-                box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-            }
 
-            .task-summary-card.today {
-                border-left: 4px solid #e53935;
-            }
 
-            .task-summary-card.tomorrow {
-                border-left: 4px solid #fb8c00;
-            }
+.tasks-summary-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 15px;
+    margin-bottom: 25px;
+}
 
-            .task-summary-card.this-week {
-                border-left: 4px solid #43a047;
-            }
+.task-summary-card {
+    background: #fff;
+    border-radius: 10px;
+    padding: 20px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    display: flex;
+    flex-direction: column;
+    position: relative;
+    overflow: hidden;
+    transition: transform 0.3s ease, box-shadow 0.3s ease;
+}
 
-            .task-summary-card.this-month {
-                border-left: 4px solid #1e88e5;
-            }
+.task-summary-card:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+}
 
-            .task-summary-icon {
-                width: 40px;
-                height: 40px;
-                border-radius: 8px;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                margin-bottom: 10px;
-            }
+.task-summary-card.today {
+    border-left: 4px solid #e53935;
+}
 
-            .task-summary-card.today .task-summary-icon {
-                background: rgba(229, 57, 53, 0.1);
-                color: #e53935;
-            }
+.task-summary-card.tomorrow {
+    border-left: 4px solid #fb8c00;
+}
 
-            .task-summary-card.tomorrow .task-summary-icon {
-                background: rgba(251, 140, 0, 0.1);
-                color: #fb8c00;
-            }
+.task-summary-card.this-week {
+    border-left: 4px solid #43a047;
+}
 
-            .task-summary-card.this-week .task-summary-icon {
-                background: rgba(67, 160, 71, 0.1);
-                color: #43a047;
-            }
+.task-summary-card.this-month {
+    border-left: 4px solid #1e88e5;
+}
 
-            .task-summary-card.this-month .task-summary-icon {
-                background: rgba(30, 136, 229, 0.1);
-                color: #1e88e5;
-            }
+.task-summary-icon {
+    width: 40px;
+    height: 40px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 10px;
+}
 
-            .task-summary-icon .dashicons {
-                font-size: 20px;
-                width: 20px;
-                height: 20px;
-            }
+.task-summary-card.today .task-summary-icon {
+    background: rgba(229, 57, 53, 0.1);
+    color: #e53935;
+}
 
-            .task-summary-content {
-                margin-top: auto;
-            }
+.task-summary-card.tomorrow .task-summary-icon {
+    background: rgba(251, 140, 0, 0.1);
+    color: #fb8c00;
+}
 
-            .task-summary-content h3 {
-                font-size: 28px;
-                font-weight: 700;
-                margin: 0;
-                line-height: 1.2;
-                color: #333;
-            }
+.task-summary-card.this-week .task-summary-icon {
+    background: rgba(67, 160, 71, 0.1);
+    color: #43a047;
+}
 
-            .task-summary-content p {
-                font-size: 14px;
-                color: #666;
-                margin: 0;
-            }
+.task-summary-card.this-month .task-summary-icon {
+    background: rgba(30, 136, 229, 0.1);
+    color: #1e88e5;
+}
 
-            .task-summary-link {
-                color: #0073aa;
-                text-decoration: none;
-                font-size: 13px;
-                margin-top: 10px;
-                display: inline-block;
-                font-weight: 500;
-                transition: color 0.2s;
-            }
+.task-summary-icon .dashicons {
+    font-size: 20px;
+    width: 20px;
+    height: 20px;
+}
 
-            .task-summary-link:hover {
-                color: #005a87;
-                text-decoration: underline;
-            }
+.task-summary-content {
+    margin-top: auto;
+}
 
-            .urgent-tasks {
-                margin-top: 25px;
-            }
+.task-summary-content h3 {
+    font-size: 28px;
+    font-weight: 700;
+    margin: 0;
+    line-height: 1.2;
+    color: #333;
+}
 
-            .urgent-tasks h4 {
-                font-size: 16px;
-                font-weight: 600;
-                color: #333;
-                margin-bottom: 15px;
-                padding-bottom: 8px;
-                border-bottom: 1px solid #eee;
-            }
+.task-summary-content p {
+    font-size: 14px;
+    color: #666;
+    margin: 0;
+}
 
-            .urgent-task-item {
-                display: flex;
-                align-items: center;
-                padding: 15px;
-                margin-bottom: 10px;
-                background: #fff;
-                border-radius: 8px;
-                box-shadow: 0 1px 3px rgba(0,0,0,0.08);
-                transition: transform 0.2s ease;
-            }
+.task-summary-link {
+    color: #0073aa;
+    text-decoration: none;
+    font-size: 13px;
+    margin-top: 10px;
+    display: inline-block;
+    font-weight: 500;
+    transition: color 0.2s;
+}
 
-            .urgent-task-item:hover {
-                transform: translateY(-2px);
-            }
+.task-summary-link:hover {
+    color: #005a87;
+    text-decoration: underline;
+}
 
-            .urgent-task-item.very-urgent {
-                border-left: 4px solid #e53935;
-            }
+.urgent-tasks {
+    margin-top: 25px;
+}
 
-            .urgent-task-item.urgent {
-                border-left: 4px solid #fb8c00;
-            }
+.urgent-tasks h4 {
+    font-size: 16px;
+    font-weight: 600;
+    color: #333;
+    margin-bottom: 15px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid #eee;
+}
 
-            .urgent-task-item.normal {
-                border-left: 4px solid #43a047;
-            }
+.urgent-task-item {
+    display: flex;
+    align-items: center;
+    padding: 15px;
+    margin-bottom: 10px;
+    background: #fff;
+    border-radius: 8px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    transition: transform 0.2s ease;
+}
 
-            .task-date {
-                width: 50px;
-                height: 50px;
-                background: #f5f7fa;
-                border-radius: 8px;
-                display: flex;
-                flex-direction: column;
-                align-items: center;
-                justify-content: center;
-                margin-right: 15px;
-                flex-shrink: 0;
-            }
+.urgent-task-item:hover {
+    transform: translateY(-2px);
+}
 
-            .date-number {
-                font-size: 18px;
-                font-weight: 700;
-                color: #333;
-                line-height: 1;
-            }
+.urgent-task-item.very-urgent {
+    border-left: 4px solid #e53935;
+}
 
-            .date-month {
-                font-size: 12px;
-                color: #666;
-                text-transform: uppercase;
-            }
+.urgent-task-item.urgent {
+    border-left: 4px solid #fb8c00;
+}
 
-            .task-details {
-                flex: 1;
-            }
+.urgent-task-item.normal {
+    border-left: 4px solid #43a047;
+}
 
-            .task-details h5 {
-                font-size: 15px;
-                font-weight: 600;
-                margin: 0 0 5px;
-                color: #333;
-            }
+.task-date {
+    width: 50px;
+    height: 50px;
+    background: #f5f7fa;
+    border-radius: 8px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    margin-right: 15px;
+    flex-shrink: 0;
+}
 
-            .task-details p {
-                font-size: 13px;
-                color: #666;
-                margin: 0;
-            }
+.date-number {
+    font-size: 18px;
+    font-weight: 700;
+    color: #333;
+    line-height: 1;
+}
 
-            .task-action {
-                margin-left: 15px;
-            }
+.date-month {
+    font-size: 12px;
+    color: #666;
+    text-transform: uppercase;
+}
 
-            .view-task-btn {
-                display: inline-flex;
-                align-items: center;
-                justify-content: center;
-                padding: 6px 12px;
-                background: #0073aa;
-                color: #fff;
-                border-radius: 4px;
-                font-size: 12px;
-                text-decoration: none;
-                transition: background 0.2s;
-            }
+.task-details {
+    flex: 1;
+}
 
-            .view-task-btn:hover {
-                background: #005a87;
-                color: #fff;
-            }
+.task-details h5 {
+    font-size: 15px;
+    font-weight: 600;
+    margin: 0 0 5px;
+    color: #333;
+}
 
-            .empty-tasks-message {
-                text-align: center;
-                padding: 30px 0;
-            }
+.task-details p {
+    font-size: 13px;
+    color: #666;
+    margin: 0;
+}
 
-            .empty-tasks-message .empty-icon {
-                width: 60px;
-                height: 60px;
-                border-radius: 50%;
-                background: rgba(0,115,170,0.1);
-                color: #0073aa;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                margin: 0 auto 15px;
-            }
+.task-action {
+    margin-left: 15px;
+}
 
-            .empty-tasks-message .empty-icon .dashicons {
-                font-size: 24px;
-                width: 24px;
-                height: 24px;
-            }
+.view-task-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 6px 12px;
+    background: #0073aa;
+    color: #fff;
+    border-radius: 4px;
+    font-size: 12px;
+    text-decoration: none;
+    transition: background 0.2s;
+}
 
-            .empty-tasks-message p {
-                color: #666;
-                margin-bottom: 15px;
-            }
+.view-task-btn:hover {
+    background: #005a87;
+    color: #fff;
+}
 
-            /* Ekip performans dağılımı stilleri */
-            .performance-layout {
-                display: flex;
-                flex-wrap: wrap;
-                gap: 25px;
-            }
+.empty-tasks-message {
+    text-align: center;
+    padding: 30px 0;
+}
 
-            .team-contribution-chart {
-                flex: 1;
-                min-width: 250px;
-            }
+.empty-tasks-message .empty-icon {
+    width: 60px;
+    height: 60px;
+    border-radius: 50%;
+    background: rgba(0,115,170,0.1);
+    color: #0073aa;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0 auto 15px;
+}
 
-            .team-performance-table {
-                flex: 2;
-                min-width: 350px;
-            }
+.empty-tasks-message .empty-icon .dashicons {
+    font-size: 24px;
+    width: 24px;
+    height: 24px;
+}
 
-            .pie-chart {
-                width: 100%;
-                height: 300px;
-                position: relative;
-                margin-bottom: 15px;
-            }
+.empty-tasks-message p {
+    color: #666;
+    margin-bottom: 15px;
+}
 
-            .pie-chart-title {
-                font-size: 14px;
-                font-weight: 600;
-                margin-top: 5px;
-                margin-bottom: 15px;
-                text-align: center;
-                color: #333;
-            }
+@media screen and (max-width: 992px) {
+    .tasks-summary-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}
 
-            .performance-section {
-                margin-top: 20px;
-            }
-            
-            @media (max-width: 992px) {
-                .tasks-summary-grid {
-                    grid-template-columns: repeat(2, 1fr);
-                }
-            }
-            
-            @media (max-width: 768px) {
-                .performance-layout {
-                    flex-direction: column;
-                }
-                
-                .team-contribution-chart, 
-                .team-performance-table {
-                    flex: 1 100%;
-                }
-            }
-            
-            @media (max-width: 576px) {
-                .tasks-summary-grid {
-                    grid-template-columns: 1fr;
-                }
-            }
+@media screen and (max-width: 576px) {
+    .tasks-summary-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+
+
+.performance-layout {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 25px;
+}
+
+.team-contribution-chart {
+    flex: 1;
+    min-width: 250px;
+}
+
+.team-performance-table {
+    flex: 2;
+    min-width: 350px;
+}
+
+.pie-chart {
+    width: 100%;
+    height: 300px;
+    position: relative;
+    margin-bottom: 15px;
+}
+
+.pie-chart-title {
+    font-size: 14px;
+    font-weight: 600;
+    margin-top: 5px;
+    margin-bottom: 15px;
+    text-align: center;
+    color: #333;
+}
+
+.performance-section {
+    margin-top: 20px;
+}
+
+@media (max-width: 768px) {
+    .performance-layout {
+        flex-direction: column;
+    }
+    
+    .team-contribution-chart, 
+    .team-performance-table {
+        flex: 1 100%;
+    }
+}
+
+
         </style>
         
         <script>
