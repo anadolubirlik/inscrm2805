@@ -91,6 +91,14 @@ function is_team_leader($user_id) {
 }
 
 /**
+ * Tam yetkili kullanıcı kontrolü (Patron ve Müdür)
+ */
+function has_full_admin_access($user_id) {
+    // Patron ve Müdür aynı haklara sahip olmalı
+    return is_patron($user_id) || is_manager($user_id);
+}
+
+/**
  * Ekip üyeleri listesi
  */
 function get_team_members($user_id) {
@@ -128,14 +136,19 @@ function get_dashboard_representatives($user_id, $current_view = 'dashboard') {
     
     $rep_id = $rep->id;
     
-    // Patron için:
-    if (is_patron($user_id)) {
-        // Dashboard ve ana menülerde (iletişimden anladığım bu) tüm verileri görsün
+    // Patron ve Müdür için (tam yetkili kullanıcılar):
+    if (has_full_admin_access($user_id)) {
+        // Dashboard, ana menüler ve yönetim ekranlarında tüm verileri görsün
         if ($current_view == 'dashboard' || 
             $current_view == 'customers' || 
             $current_view == 'policies' ||
             $current_view == 'tasks' ||
-            $current_view == 'reports') {
+            $current_view == 'reports' ||
+            $current_view == 'organization' ||
+            $current_view == 'all_personnel' ||
+            $current_view == 'manager_dashboard' || 
+            $current_view == 'team_leaders') {
+            
             return $wpdb->get_col("SELECT id FROM {$wpdb->prefix}insurance_crm_representatives WHERE status = 'active'");
         } 
         // Alt menülerde belirli bir ekip gösteriliyorsa sadece o ekibi göster
@@ -152,42 +165,6 @@ function get_dashboard_representatives($user_id, $current_view = 'dashboard') {
         return $wpdb->get_col("SELECT id FROM {$wpdb->prefix}insurance_crm_representatives WHERE status = 'active'");
     }
     
-    // Müdür için:
-    if (is_manager($user_id)) {
-        // Ana dashboard'da kendi verilerini görsün
-        if ($current_view == 'dashboard') {
-            return [$rep_id];
-        }
-        // Müdüre özel alt menülerde (müdür paneli, tüm ekipler vs) tüm verileri görsün
-        else if ($current_view == 'manager_dashboard' || 
-                $current_view == 'all_teams' || 
-                $current_view == 'team_leaders' ||
-                strpos($current_view, 'manager_') === 0) {
-            
-            return $wpdb->get_col("SELECT id FROM {$wpdb->prefix}insurance_crm_representatives WHERE status = 'active'");
-        }
-        // Ana menülerde de tüm verileri görsün (istenildiği gibi)
-        else if ($current_view == 'customers' || 
-                $current_view == 'policies' ||
-                $current_view == 'tasks' ||
-                $current_view == 'reports') {
-            
-            return $wpdb->get_col("SELECT id FROM {$wpdb->prefix}insurance_crm_representatives WHERE status = 'active'");
-        }
-        // Belirli ekip görünümü seçilmişse o ekibin verilerini göster
-        else if (strpos($current_view, 'team_') === 0 && isset($_GET['team_id'])) {
-            $selected_team_id = sanitize_text_field($_GET['team_id']);
-            $settings = get_option('insurance_crm_settings', []);
-            $teams = $settings['teams_settings']['teams'] ?? [];
-            if (isset($teams[$selected_team_id])) {
-                $team_members = array_merge([$teams[$selected_team_id]['leader_id']], $teams[$selected_team_id]['members']);
-                return $team_members;
-            }
-        }
-        // Diğer tüm durumlarda sadece kendi verilerini göster
-        return [$rep_id];
-    }
-    
     // Ekip lideri için
     if (is_team_leader($user_id)) {
         // Dashboard ve ana menülerde sadece kendi verilerini görür
@@ -196,7 +173,9 @@ function get_dashboard_representatives($user_id, $current_view = 'dashboard') {
         }
         // Ekip lideri menülerinde ekibinin tüm verilerini görür
         else if ($current_view == 'team' || 
-                strpos($current_view, 'team_') === 0) {
+                strpos($current_view, 'team_') === 0 ||
+                $current_view == 'organization' || // Organizasyon yönetimine erişim
+                $current_view == 'all_personnel') { // Personel yönetimine erişim
             
             $team_members = get_team_members($user_id);
             return !empty($team_members) ? $team_members : [$rep_id];
@@ -222,7 +201,7 @@ function get_dashboard_representatives($user_id, $current_view = 'dashboard') {
  * Kullanıcının silme yetkisi olup olmadığını kontrol eder
  */
 function can_delete_items($user_id) {
-    return is_patron($user_id) || is_manager($user_id);
+    return has_full_admin_access($user_id);
 }
 
 /**
@@ -408,7 +387,7 @@ $rep_ids = get_dashboard_representatives($current_user->ID, $current_view);
 // Ekip hedefi hesaplama
 $team_target = 0;
 $team_policy_target = 0;
-if ($current_view === 'team' || strpos($current_view, 'team_') === 0 || $user_role == 'patron' || $user_role == 'manager') {
+if ($current_view === 'team' || strpos($current_view, 'team_') === 0 || has_full_admin_access($current_user->ID)) {
     $targets = $wpdb->get_results($wpdb->prepare(
         "SELECT monthly_target, target_policy_count FROM {$wpdb->prefix}insurance_crm_representatives 
          WHERE id IN (" . implode(',', array_fill(0, count($rep_ids), '%d')) . ")",
@@ -425,7 +404,7 @@ if ($current_view === 'team' || strpos($current_view, 'team_') === 0 || $user_ro
 
 // Üye performans verileri
 $member_performance = [];
-if ($current_view === 'team' || $user_role == 'patron' || $user_role == 'manager') {
+if ($current_view === 'team' || has_full_admin_access($current_user->ID)) {
     foreach ($rep_ids as $rep_id) {
         $member_data = $wpdb->get_row($wpdb->prepare(
             "SELECT r.id, u.display_name, r.title, r.monthly_target, r.target_policy_count 
@@ -502,20 +481,69 @@ if (!empty($member_performance)) {
     });
 }
 
-// Mevcut sorguları ekip için uyarlama
+// Filtre tarihi belirleme
+$date_filter_period = isset($_GET['date_filter']) ? sanitize_text_field($_GET['date_filter']) : 'this_month';
+$custom_start_date = isset($_GET['start_date']) ? sanitize_text_field($_GET['start_date']) : '';
+$custom_end_date = isset($_GET['end_date']) ? sanitize_text_field($_GET['end_date']) : '';
+
+// Seçilen tarih aralığına göre başlangıç ve bitiş tarihlerini belirle
+switch ($date_filter_period) {
+    case 'last_3_months':
+        $filter_start_date = date('Y-m-d', strtotime('-3 months'));
+        $filter_end_date = date('Y-m-d');
+        $filter_title = 'Son 3 Ay';
+        break;
+    case 'last_6_months':
+        $filter_start_date = date('Y-m-d', strtotime('-6 months'));
+        $filter_end_date = date('Y-m-d');
+        $filter_title = 'Son 6 Ay';
+        break;
+    case 'this_year':
+        $filter_start_date = date('Y-01-01');
+        $filter_end_date = date('Y-m-d');
+        $filter_title = 'Bu Yıl';
+        break;
+    case 'custom':
+        $filter_start_date = !empty($custom_start_date) ? $custom_start_date : date('Y-m-01');
+        $filter_end_date = !empty($custom_end_date) ? $custom_end_date : date('Y-m-d');
+        $filter_title = date('d.m.Y', strtotime($filter_start_date)) . ' - ' . date('d.m.Y', strtotime($filter_end_date));
+        break;
+    case 'this_month':
+    default:
+        $filter_start_date = date('Y-m-01');
+        $filter_end_date = date('Y-m-t');
+        $filter_title = 'Bu Ay';
+        break;
+}
+
+// Filtre parametrelerini URL'e eklemek için yardımcı fonksiyon
+function add_date_filter_to_url($url, $period, $start_date = '', $end_date = '') {
+    $url = add_query_arg('date_filter', $period, $url);
+    
+    if ($period === 'custom') {
+        if (!empty($start_date)) {
+            $url = add_query_arg('start_date', $start_date, $url);
+        }
+        if (!empty($end_date)) {
+            $url = add_query_arg('end_date', $end_date, $url);
+        }
+    }
+    
+    return $url;
+}
+
+// Mevcut sorguları ekip için uyarlama (tarih filtresi eklenmiş)
 $total_customers = $wpdb->get_var($wpdb->prepare(
     "SELECT COUNT(*) FROM {$wpdb->prefix}insurance_crm_customers 
      WHERE representative_id IN (" . implode(',', array_fill(0, count($rep_ids), '%d')) . ")",
     ...$rep_ids
 ));
 
-$this_month_start = date('Y-m-01 00:00:00');
-$this_month_end = date('Y-m-t 23:59:59');
 $new_customers = $wpdb->get_var($wpdb->prepare(
     "SELECT COUNT(*) FROM {$wpdb->prefix}insurance_crm_customers 
      WHERE representative_id IN (" . implode(',', array_fill(0, count($rep_ids), '%d')) . ") 
      AND created_at BETWEEN %s AND %s",
-    ...array_merge($rep_ids, [$this_month_start, $this_month_end])
+    ...array_merge($rep_ids, [$filter_start_date . ' 00:00:00', $filter_end_date . ' 23:59:59'])
 ));
 $new_customers = $new_customers ?: 0;
 $customer_increase_rate = $total_customers > 0 ? ($new_customers / $total_customers) * 100 : 0;
@@ -532,17 +560,17 @@ $new_policies = $wpdb->get_var($wpdb->prepare(
      WHERE representative_id IN (" . implode(',', array_fill(0, count($rep_ids), '%d')) . ") 
      AND start_date BETWEEN %s AND %s
      AND cancellation_date IS NULL",
-    ...array_merge($rep_ids, [$this_month_start, $this_month_end])
+    ...array_merge($rep_ids, [$filter_start_date . ' 00:00:00', $filter_end_date . ' 23:59:59'])
 ));
 $new_policies = $new_policies ?: 0;
 
-$this_month_cancelled_policies = $wpdb->get_var($wpdb->prepare(
+$this_period_cancelled_policies = $wpdb->get_var($wpdb->prepare(
     "SELECT COUNT(*) FROM {$wpdb->prefix}insurance_crm_policies 
      WHERE representative_id IN (" . implode(',', array_fill(0, count($rep_ids), '%d')) . ") 
      AND cancellation_date BETWEEN %s AND %s",
-    ...array_merge($rep_ids, [$this_month_start, $this_month_end])
+    ...array_merge($rep_ids, [$filter_start_date . ' 00:00:00', $filter_end_date . ' 23:59:59'])
 ));
-$this_month_cancelled_policies = $this_month_cancelled_policies ?: 0;
+$this_period_cancelled_policies = $this_period_cancelled_policies ?: 0;
 
 $policy_increase_rate = $total_policies > 0 ? ($new_policies / $total_policies) * 100 : 0;
 
@@ -553,6 +581,15 @@ $total_refunded_amount = $wpdb->get_var($wpdb->prepare(
     ...$rep_ids
 ));
 $total_refunded_amount = $total_refunded_amount ?: 0;
+
+$period_refunded_amount = $wpdb->get_var($wpdb->prepare(
+    "SELECT COALESCE(SUM(refunded_amount), 0) 
+     FROM {$wpdb->prefix}insurance_crm_policies 
+     WHERE representative_id IN (" . implode(',', array_fill(0, count($rep_ids), '%d')) . ")
+     AND cancellation_date BETWEEN %s AND %s",
+    ...array_merge($rep_ids, [$filter_start_date . ' 00:00:00', $filter_end_date . ' 23:59:59'])
+));
+$period_refunded_amount = $period_refunded_amount ?: 0;
 
 $total_premium = $wpdb->get_var($wpdb->prepare(
     "SELECT COALESCE(SUM(premium_amount), 0) - COALESCE(SUM(refunded_amount), 0)
@@ -567,7 +604,7 @@ $new_premium = $wpdb->get_var($wpdb->prepare(
      FROM {$wpdb->prefix}insurance_crm_policies 
      WHERE representative_id IN (" . implode(',', array_fill(0, count($rep_ids), '%d')) . ") 
      AND start_date BETWEEN %s AND %s",
-    ...array_merge($rep_ids, [$this_month_start, $this_month_end])
+    ...array_merge($rep_ids, [$filter_start_date . ' 00:00:00', $filter_end_date . ' 23:59:59'])
 ));
 $new_premium = $new_premium ?: 0;
 $premium_increase_rate = $total_premium > 0 ? ($new_premium / $total_premium) * 100 : 0;
@@ -594,6 +631,168 @@ $achievement_rate = min(100, $achievement_rate);
 $policy_achievement_rate = ($team_policy_target > 0 && $new_policies > 0) ? 
     ($new_policies / $team_policy_target) * 100 : 0;
 $policy_achievement_rate = min(100, $policy_achievement_rate);
+
+// Performans Metrikleri - En çok üretim yapan, en çok yeni iş, en çok yeni müşteri, en çok iptali olan
+$performance_metrics = get_performance_metrics($rep_ids, $date_filter_period, $filter_start_date, $filter_end_date);
+
+/**
+ * Performans metriklerini hesaplar
+ */
+function get_performance_metrics($rep_ids, $period = 'this_month', $start_date = null, $end_date = null) {
+    global $wpdb;
+    $table_policies = $wpdb->prefix . 'insurance_crm_policies';
+    $table_customers = $wpdb->prefix . 'insurance_crm_customers';
+    $table_reps = $wpdb->prefix . 'insurance_crm_representatives';
+    
+    if (empty($rep_ids)) {
+        return [
+            'top_producer' => null,
+            'most_new_business' => null,
+            'most_new_customers' => null,
+            'most_cancellations' => null
+        ];
+    }
+    
+    $rep_ids_str = implode(',', array_map('intval', $rep_ids));
+    
+    // Varsayılan tarih değerlerini ayarla
+    if (!$start_date) {
+        switch ($period) {
+            case 'last_3_months':
+                $start_date = date('Y-m-d', strtotime('-3 months'));
+                break;
+            case 'last_6_months':
+                $start_date = date('Y-m-d', strtotime('-6 months'));
+                break;
+            case 'this_year':
+                $start_date = date('Y-01-01');
+                break;
+            case 'this_month':
+            default:
+                $start_date = date('Y-m-01');
+                break;
+        }
+    }
+    
+    if (!$end_date) {
+        $end_date = date('Y-m-d');
+    }
+    
+    $start_datetime = $start_date . ' 00:00:00';
+    $end_datetime = $end_date . ' 23:59:59';
+    
+    // En çok üretim yapan (toplam prim)
+    $top_producer = $wpdb->get_row($wpdb->prepare(
+        "SELECT 
+            p.representative_id,
+            SUM(p.premium_amount) - COALESCE(SUM(p.refunded_amount), 0) as total_premium,
+            COUNT(p.id) as policy_count,
+            r.user_id,
+            u.display_name,
+            r.title
+        FROM 
+            {$table_policies} p
+        LEFT JOIN 
+            {$table_reps} r ON p.representative_id = r.id
+        LEFT JOIN 
+            {$wpdb->users} u ON r.user_id = u.ID
+        WHERE 
+            p.representative_id IN ({$rep_ids_str})
+            AND p.status = 'active'
+            AND p.start_date BETWEEN %s AND %s
+        GROUP BY 
+            p.representative_id
+        ORDER BY 
+            total_premium DESC
+        LIMIT 1",
+        $start_datetime, $end_datetime
+    ));
+    
+    // En çok yeni iş (poliçe sayısı)
+    $most_new_business = $wpdb->get_row($wpdb->prepare(
+        "SELECT 
+            p.representative_id,
+            COUNT(p.id) as policy_count,
+            SUM(p.premium_amount) - COALESCE(SUM(p.refunded_amount), 0) as total_premium,
+            r.user_id,
+            u.display_name,
+            r.title
+        FROM 
+            {$table_policies} p
+        LEFT JOIN 
+            {$table_reps} r ON p.representative_id = r.id
+        LEFT JOIN 
+            {$wpdb->users} u ON r.user_id = u.ID
+        WHERE 
+            p.representative_id IN ({$rep_ids_str})
+            AND p.status = 'active'
+            AND p.start_date BETWEEN %s AND %s
+        GROUP BY 
+            p.representative_id
+        ORDER BY 
+            policy_count DESC
+        LIMIT 1",
+        $start_datetime, $end_datetime
+    ));
+    
+    // En çok yeni müşteri
+    $most_new_customers = $wpdb->get_row($wpdb->prepare(
+        "SELECT 
+            c.representative_id,
+            COUNT(c.id) as customer_count,
+            r.user_id,
+            u.display_name,
+            r.title
+        FROM 
+            {$table_customers} c
+        LEFT JOIN
+            {$table_reps} r ON c.representative_id = r.id
+        LEFT JOIN 
+            {$wpdb->users} u ON r.user_id = u.ID
+        WHERE 
+            c.representative_id IN ({$rep_ids_str})
+            AND c.created_at BETWEEN %s AND %s
+        GROUP BY 
+            c.representative_id
+        ORDER BY 
+            customer_count DESC
+        LIMIT 1",
+        $start_datetime, $end_datetime
+    ));
+    
+    // En çok iptal eden
+    $most_cancellations = $wpdb->get_row($wpdb->prepare(
+        "SELECT 
+            p.representative_id,
+            COUNT(p.id) as cancellation_count,
+            COALESCE(SUM(p.refunded_amount), 0) as refunded_amount,
+            r.user_id,
+            u.display_name,
+            r.title
+        FROM 
+            {$table_policies} p
+        LEFT JOIN 
+            {$table_reps} r ON p.representative_id = r.id
+        LEFT JOIN 
+            {$wpdb->users} u ON r.user_id = u.ID
+        WHERE 
+            p.representative_id IN ({$rep_ids_str})
+            AND p.cancellation_date BETWEEN %s AND %s
+        GROUP BY 
+            p.representative_id
+        ORDER BY 
+            cancellation_count DESC
+        LIMIT 1",
+        $start_datetime, $end_datetime
+    ));
+    
+    return [
+        'top_producer' => $top_producer,
+        'most_new_business' => $most_new_business,
+        'most_new_customers' => $most_new_customers,
+        'most_cancellations' => $most_cancellations
+    ];
+}
 
 $recent_policies = $wpdb->get_results($wpdb->prepare(
     "SELECT p.*, c.first_name, c.last_name, c.gender
@@ -744,7 +943,7 @@ if ($wpdb->last_error) {
 
 // Patron ve müdür için özel veri - tüm ekipler
 $all_teams = [];
-if ($user_role == 'patron' || $user_role == 'manager') {
+if (has_full_admin_access($current_user->ID)) {
     $settings = get_option('insurance_crm_settings', []);
     $teams = isset($settings['teams_settings']['teams']) ? $settings['teams_settings']['teams'] : array();
     
@@ -852,9 +1051,9 @@ if ($user_role == 'patron' || $user_role == 'manager') {
     });
 }
 
-// Tüm temsilcilerin hedef ve performans verileri (yalnızca patron için)
+// Tüm temsilcilerin hedef ve performans verileri (yalnızca patron ve müdür için)
 $all_representatives_performance = [];
-if ($user_role == 'patron' || $user_role == 'manager') {
+if (has_full_admin_access($current_user->ID)) {
     $all_representatives = $wpdb->get_results(
         "SELECT r.id, r.monthly_target, r.target_policy_count, u.display_name, r.title
          FROM {$wpdb->prefix}insurance_crm_representatives r 
@@ -913,59 +1112,58 @@ if ($user_role == 'patron' || $user_role == 'manager') {
         return $b['total_premium'] <=> $a['total_premium'];
     });
     
-    // Patron için en iyi 3 performans verisi
-    if ($user_role == 'patron') {
-        // En Çok Üretim Yapan
-        $top_producers = $all_representatives_performance;
-        usort($top_producers, function($a, $b) {
-            return $b['total_premium'] <=> $a['total_premium'];
-        });
-        $top_producers = array_slice($top_producers, 0, 3);
+    // En iyi 3 performans verisi
+    
+    // En Çok Üretim Yapan
+    $top_producers = $all_representatives_performance;
+    usort($top_producers, function($a, $b) {
+        return $b['total_premium'] <=> $a['total_premium'];
+    });
+    $top_producers = array_slice($top_producers, 0, 3);
+    
+    // En Çok Yeni İş
+    $top_new_businesses = $all_representatives_performance;
+    usort($top_new_businesses, function($a, $b) {
+        return $b['current_month_premium'] <=> $a['current_month_premium'];
+    });
+    $top_new_businesses = array_slice($top_new_businesses, 0, 3);
+    
+    // En Çok Yeni Müşteri
+    $top_new_customers = [];
+    foreach ($all_representatives as $rep) {
+        $new_customers_count = $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(*) FROM {$wpdb->prefix}insurance_crm_customers
+             WHERE representative_id = %d 
+             AND created_at BETWEEN %s AND %s",
+            $rep->id, date('Y-m-01 00:00:00'), date('Y-m-t 23:59:59')
+        )) ?: 0;
         
-        // En Çok Yeni İş
-        $top_new_businesses = $all_representatives_performance;
-        usort($top_new_businesses, function($a, $b) {
-            return $b['current_month_premium'] <=> $a['current_month_premium'];
-        });
-        $top_new_businesses = array_slice($top_new_businesses, 0, 3);
+        $customers_count = $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(*) FROM {$wpdb->prefix}insurance_crm_customers
+             WHERE representative_id = %d",
+            $rep->id
+        )) ?: 0;
         
-        // En Çok Yeni Müşteri
-        $top_new_customers = [];
-        foreach ($all_representatives as $rep) {
-            $new_customers_count = $wpdb->get_var($wpdb->prepare(
-                "SELECT COUNT(*) FROM {$wpdb->prefix}insurance_crm_customers
-                 WHERE representative_id = %d 
-                 AND created_at BETWEEN %s AND %s",
-                $rep->id, date('Y-m-01 00:00:00'), date('Y-m-t 23:59:59')
-            )) ?: 0;
-            
-            $customers_count = $wpdb->get_var($wpdb->prepare(
-                "SELECT COUNT(*) FROM {$wpdb->prefix}insurance_crm_customers
-                 WHERE representative_id = %d",
-                $rep->id
-            )) ?: 0;
-            
-            $top_new_customers[] = [
-                'id' => $rep->id,
-                'name' => $rep->display_name,
-                'title' => $rep->title,
-                'new_customers' => $new_customers_count,
-                'total_customers' => $customers_count
-            ];
-        }
-        
-        usort($top_new_customers, function($a, $b) {
-            return $b['new_customers'] <=> $a['new_customers'];
-        });
-        $top_new_customers = array_slice($top_new_customers, 0, 3);
-        
-        // En Çok İptali Olan
-        $top_cancellations = $all_representatives_performance;
-        usort($top_cancellations, function($a, $b) {
-            return $b['cancelled_policies'] <=> $a['cancelled_policies'];
-        });
-        $top_cancellations = array_slice($top_cancellations, 0, 3);
+        $top_new_customers[] = [
+            'id' => $rep->id,
+            'name' => $rep->display_name,
+            'title' => $rep->title,
+            'new_customers' => $new_customers_count,
+            'total_customers' => $customers_count
+        ];
     }
+    
+    usort($top_new_customers, function($a, $b) {
+        return $b['new_customers'] <=> $a['new_customers'];
+    });
+    $top_new_customers = array_slice($top_new_customers, 0, 3);
+    
+    // En Çok İptali Olan
+    $top_cancellations = $all_representatives_performance;
+    usort($top_cancellations, function($a, $b) {
+        return $b['cancelled_policies'] <=> $a['cancelled_policies'];
+    });
+    $top_cancellations = array_slice($top_cancellations, 0, 3);
 }
 
 $search_results = array();
@@ -1061,6 +1259,23 @@ function create_activity_log_table() {
 // Activity Log tablosunu oluştur
 create_activity_log_table();
 
+// Yönetim Hiyerarşisini getiren fonksiyon
+function get_management_hierarchy() {
+    $settings = get_option('insurance_crm_settings', []);
+    return isset($settings['management_hierarchy']) ? $settings['management_hierarchy'] : [
+        'patron_id' => 0,
+        'manager_id' => 0,
+        'assistant_manager_ids' => []
+    ];
+}
+
+// Yönetim hiyerarşisini güncelleme fonksiyonu
+function update_management_hierarchy($hierarchy) {
+    $settings = get_option('insurance_crm_settings', []);
+    $settings['management_hierarchy'] = $hierarchy;
+    return update_option('insurance_crm_settings', $settings);
+}
+
 add_action('wp_enqueue_scripts', 'insurance_crm_rep_panel_scripts');
 function insurance_crm_rep_panel_scripts() {
     wp_enqueue_script('chartjs', 'https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js', array(), '3.9.1', true);
@@ -1073,7 +1288,7 @@ function insurance_crm_rep_panel_scripts() {
     <meta charset="<?php bloginfo('charset'); ?>">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js"></script>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css" integrity="sha512-1ycn6IcaQQ40/MKBW2W4Rhis/DbILU74C1vSrLJxCq57o941Ym01SwNsOMqvEBFlcgUa6xLiPY/NS5R+E6ztJQ==" crossorigin="anonymous" referrerpolicy="no-referrer" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css">
     <?php wp_head(); ?>
 </head>
 
@@ -1094,7 +1309,6 @@ function insurance_crm_rep_panel_scripts() {
         
         <div class="sidenav-user">
             <div class="user-avatar">
-    
  <?php 
     // Temsilci bilgilerini al
     global $wpdb;
@@ -1110,8 +1324,6 @@ function insurance_crm_rep_panel_scripts() {
     <?php else: ?>
         <?php echo get_avatar($current_user->ID, 64); ?>
     <?php endif; ?>
-
-
             </div>
             <div class="user-info">
                 <h4><?php echo esc_html($current_user->display_name); ?></h4>
@@ -1144,19 +1356,18 @@ function insurance_crm_rep_panel_scripts() {
                 <span>Görevlerim</span>
             </a>
 
+            <a href="<?php echo generate_panel_url('reports'); ?>" class="<?php echo $current_view == 'reports' ? 'active' : ''; ?>">
+                <i class="dashicons dashicons-chart-area"></i>
+                <span>Raporlar</span>
+            </a>
 
-<a href="<?php echo generate_panel_url('reports'); ?>" class="<?php echo $current_view == 'reports' ? 'active' : ''; ?>">
-    <i class="dashicons dashicons-chart-area"></i>
-    <span>Raporlar</span>
-</a>
-
-<a href="<?php echo generate_panel_url('iceri_aktarim'); ?>" class="<?php echo $current_view == 'iceri_aktarim' ? 'active' : ''; ?>">
-    <i class="dashicons dashicons-upload"></i>
-    <span>İçeri Aktarım</span>
-</a>
+            <a href="<?php echo generate_panel_url('iceri_aktarim'); ?>" class="<?php echo $current_view == 'iceri_aktarim' ? 'active' : ''; ?>">
+                <i class="dashicons dashicons-upload"></i>
+                <span>İçeri Aktarım</span>
+            </a>
             
-            <?php if (is_patron($current_user->ID)): ?>
-            <!-- Patron İçin Özel Menü -->
+            <?php if (has_full_admin_access($current_user->ID)): ?>
+            <!-- Patron ve Müdür İçin Özel Menü -->
             <div class="sidenav-submenu">
                 <a href="<?php echo generate_panel_url('organization'); ?>" class="<?php echo $current_view == 'organization' ? 'active' : ''; ?>">
                     <i class="dashicons dashicons-networking"></i>
@@ -1178,26 +1389,6 @@ function insurance_crm_rep_panel_scripts() {
                     <a href="<?php echo generate_panel_url('boss_settings'); ?>" class="<?php echo $current_view == 'boss_settings' ? 'active' : ''; ?>">
                         <i class="dashicons dashicons-admin-generic"></i>
                         <span>Yönetim Ayarları</span>
-                    </a>
-                </div>
-            </div>
-            <?php endif; ?>
-            
-            <?php if (is_manager($current_user->ID)): ?>
-            <!-- Müdür İçin Özel Menü -->
-            <div class="sidenav-submenu">
-                <a href="<?php echo generate_panel_url('manager_dashboard'); ?>" class="<?php echo $current_view == 'manager_dashboard' ? 'active' : ''; ?>">
-                    <i class="dashicons dashicons-businessman"></i>
-                    <span>Müdür Paneli</span>
-                </a>
-                <div class="submenu-items">
-                    <a href="<?php echo generate_panel_url('all_personnel'); ?>" class="<?php echo $current_view == 'all_personnel' ? 'active' : ''; ?>">
-                        <i class="dashicons dashicons-groups"></i>
-                        <span>Tüm Personel</span>
-                    </a>
-                    <a href="<?php echo generate_panel_url('team_leaders'); ?>" class="<?php echo $current_view == 'team_leaders' ? 'active' : ''; ?>">
-                        <i class="dashicons dashicons-businessperson"></i>
-                        <span>Ekip Liderleri</span>
                     </a>
                 </div>
             </div>
@@ -1435,11 +1626,58 @@ function insurance_crm_rep_panel_scripts() {
 
         <?php if ($current_view == 'dashboard' || $current_view == 'team'): ?>
         <div class="main-content">
-            <?php if ($user_role == 'patron'): ?>
-            <!-- PATRON DASHBOARD İÇERİĞİ -->
-            <div class="dashboard-header">
-                <h3>Organizasyon Genel Bakış</h3>
-                <p class="dashboard-subtitle">Tüm organizasyon için performans metrikleri ve genel bakış</p>
+            <?php if (has_full_admin_access($current_user->ID)): ?>
+            <!-- PATRON VE MÜDÜR DASHBOARD İÇERİĞİ -->
+            <div class="dashboard-header-container">
+                <div class="dashboard-header">
+                    <h3>Organizasyon Genel Bakış</h3>
+                    <p class="dashboard-subtitle">Tüm organizasyon için performans metrikleri ve genel bakış</p>
+                </div>
+                
+                <!-- Tarih Filtresi - SAĞ TARAFA ALINMIŞ HALDE -->
+                <div class="performance-date-filter">
+                    <form method="get" action="<?php echo generate_panel_url('dashboard'); ?>">
+                        <input type="hidden" name="view" value="<?php echo $current_view; ?>">
+                        
+                        <div class="filter-group">
+                            <label>Zaman Aralığı:</label>
+                            <div class="filter-buttons">
+                                <a href="<?php echo add_date_filter_to_url(generate_panel_url($current_view), 'this_month'); ?>" 
+                                   class="filter-btn <?php echo $date_filter_period == 'this_month' ? 'active' : ''; ?>">Bu Ay</a>
+                                <a href="<?php echo add_date_filter_to_url(generate_panel_url($current_view), 'last_3_months'); ?>" 
+                                   class="filter-btn <?php echo $date_filter_period == 'last_3_months' ? 'active' : ''; ?>">Son 3 Ay</a>
+                                <a href="<?php echo add_date_filter_to_url(generate_panel_url($current_view), 'last_6_months'); ?>" 
+                                   class="filter-btn <?php echo $date_filter_period == 'last_6_months' ? 'active' : ''; ?>">Son 6 Ay</a>
+                                <a href="<?php echo add_date_filter_to_url(generate_panel_url($current_view), 'this_year'); ?>" 
+                                   class="filter-btn <?php echo $date_filter_period == 'this_year' ? 'active' : ''; ?>">Bu Yıl</a>
+                                <button type="button" id="custom-date-toggle" 
+                                        class="filter-btn <?php echo $date_filter_period == 'custom' ? 'active' : ''; ?>">Tarih Aralığı</button>
+                            </div>
+                        </div>
+                        
+                        <div id="custom-date-container" class="custom-date-container" 
+                             style="<?php echo $date_filter_period == 'custom' ? 'display: flex;' : 'display: none;'; ?>">
+                            <div class="date-inputs">
+                                <div class="date-field">
+                                    <label for="start_date">Başlangıç:</label>
+                                    <input type="date" name="start_date" id="start_date" 
+                                           value="<?php echo esc_attr($custom_start_date); ?>" required>
+                                </div>
+                                <div class="date-field">
+                                    <label for="end_date">Bitiş:</label>
+                                    <input type="date" name="end_date" id="end_date" 
+                                           value="<?php echo esc_attr($custom_end_date); ?>" required>
+                                </div>
+                                <input type="hidden" name="date_filter" value="custom">
+                                <button type="submit" class="submit-date-filter">Filtrele</button>
+                            </div>
+                        </div>
+                    </form>
+                    
+                    <div class="current-filter">
+                        <span>Gösterilen Veriler: <strong><?php echo $filter_title; ?></strong></span>
+                    </div>
+                </div>
             </div>
             
             <div class="stats-grid">
@@ -1453,7 +1691,7 @@ function insurance_crm_rep_panel_scripts() {
                     </div>
                     <div class="stat-change positive">
                         <div class="stat-new">
-                            Bu ay eklenen: +<?php echo $new_customers; ?> Müşteri
+                            <?php echo $filter_title; ?> eklenen: +<?php echo $new_customers; ?> Müşteri
                         </div>
                         <div class="stat-rate positive">
                             <i class="dashicons dashicons-arrow-up-alt"></i>
@@ -1473,10 +1711,10 @@ function insurance_crm_rep_panel_scripts() {
                     </div>
                     <div class="stat-change positive">
                         <div class="stat-new">
-                            Bu ay eklenen: +<?php echo $new_policies; ?> Poliçe
+                            <?php echo $filter_title; ?> eklenen: +<?php echo $new_policies; ?> Poliçe
                         </div>
                         <div class="stat-new refund-info">
-                            Bu ay iptal edilen: <?php echo $this_month_cancelled_policies; ?> Poliçe
+                            <?php echo $filter_title; ?> iptal edilen: <?php echo $this_period_cancelled_policies; ?> Poliçe
                         </div>
                         <div class="stat-rate positive">
                             <i class="dashicons dashicons-arrow-up-alt"></i>
@@ -1496,7 +1734,10 @@ function insurance_crm_rep_panel_scripts() {
                     </div>
                     <div class="stat-change positive">
                         <div class="stat-new">
-                            Bu ay eklenen: +₺<?php echo number_format($new_premium, 2, ',', '.'); ?>
+                            <?php echo $filter_title; ?> eklenen: +₺<?php echo number_format($new_premium, 2, ',', '.'); ?>
+                        </div>
+                        <div class="stat-new refund-info">
+                            <?php echo $filter_title; ?> iptal edilen: ₺<?php echo number_format($period_refunded_amount, 2, ',', '.'); ?>
                         </div>
                         <div class="stat-rate positive">
                             <i class="dashicons dashicons-arrow-up-alt"></i>
@@ -1526,8 +1767,8 @@ function insurance_crm_rep_panel_scripts() {
                 </div>
             </div>
             
-            <!-- Patron için 4 yeni performans panel -->
-            <div class="stats-grid">
+            <!-- 4 performans kutusu - tüm yetki seviyelerinde aynı yerde gösterilecek -->
+            <div class="performance-stats-grid">
                 <div class="stat-box top-producers-box">
                     <div class="stat-icon">
                         <i class="fas fa-trophy"></i>
@@ -1536,15 +1777,17 @@ function insurance_crm_rep_panel_scripts() {
                         <div class="stat-title">En Çok Üretim Yapan</div>
                     </div>
                     <div class="top-performers">
-                        <?php foreach ($top_producers as $index => $producer): ?>
-                        <div class="top-performer">
-                            <div class="rank">#<?php echo $index + 1; ?></div>
-                            <div class="performer-info">
-                                <div class="performer-name"><?php echo esc_html($producer['name']); ?></div>
-                                <div class="performer-value">₺<?php echo number_format($producer['total_premium'], 2, ',', '.'); ?></div>
+                        <?php if (!empty($performance_metrics['top_producer'])): ?>
+                            <div class="top-performer">
+                                <div class="rank">#1</div>
+                                <div class="performer-info">
+                                    <div class="performer-name"><?php echo esc_html($performance_metrics['top_producer']->display_name); ?></div>
+                                    <div class="performer-value">₺<?php echo number_format($performance_metrics['top_producer']->total_premium, 2, ',', '.'); ?></div>
+                                </div>
                             </div>
-                        </div>
-                        <?php endforeach; ?>
+                        <?php else: ?>
+                            <div class="empty-performers">Veri bulunamadı.</div>
+                        <?php endif; ?>
                     </div>
                 </div>
                 
@@ -1556,15 +1799,17 @@ function insurance_crm_rep_panel_scripts() {
                         <div class="stat-title">En Çok Yeni İş</div>
                     </div>
                     <div class="top-performers">
-                        <?php foreach ($top_new_businesses as $index => $business): ?>
-                        <div class="top-performer">
-                            <div class="rank">#<?php echo $index + 1; ?></div>
-                            <div class="performer-info">
-                                <div class="performer-name"><?php echo esc_html($business['name']); ?></div>
-                                <div class="performer-value">₺<?php echo number_format($business['current_month_premium'], 2, ',', '.'); ?></div>
+                        <?php if (!empty($performance_metrics['most_new_business'])): ?>
+                            <div class="top-performer">
+                                <div class="rank">#1</div>
+                                <div class="performer-info">
+                                    <div class="performer-name"><?php echo esc_html($performance_metrics['most_new_business']->display_name); ?></div>
+                                    <div class="performer-value"><?php echo $performance_metrics['most_new_business']->policy_count; ?> poliçe</div>
+                                </div>
                             </div>
-                        </div>
-                        <?php endforeach; ?>
+                        <?php else: ?>
+                            <div class="empty-performers">Veri bulunamadı.</div>
+                        <?php endif; ?>
                     </div>
                 </div>
                 
@@ -1576,15 +1821,17 @@ function insurance_crm_rep_panel_scripts() {
                         <div class="stat-title">En Çok Yeni Müşteri</div>
                     </div>
                     <div class="top-performers">
-                        <?php foreach ($top_new_customers as $index => $customer): ?>
-                        <div class="top-performer">
-                            <div class="rank">#<?php echo $index + 1; ?></div>
-                            <div class="performer-info">
-                                <div class="performer-name"><?php echo esc_html($customer['name']); ?></div>
-                                <div class="performer-value"><?php echo $customer['new_customers']; ?> müşteri</div>
+                        <?php if (!empty($performance_metrics['most_new_customers'])): ?>
+                            <div class="top-performer">
+                                <div class="rank">#1</div>
+                                <div class="performer-info">
+                                    <div class="performer-name"><?php echo esc_html($performance_metrics['most_new_customers']->display_name); ?></div>
+                                    <div class="performer-value"><?php echo $performance_metrics['most_new_customers']->customer_count; ?> müşteri</div>
+                                </div>
                             </div>
-                        </div>
-                        <?php endforeach; ?>
+                        <?php else: ?>
+                            <div class="empty-performers">Veri bulunamadı.</div>
+                        <?php endif; ?>
                     </div>
                 </div>
                 
@@ -1596,20 +1843,22 @@ function insurance_crm_rep_panel_scripts() {
                         <div class="stat-title">En Çok İptali Olan</div>
                     </div>
                     <div class="top-performers">
-                        <?php foreach ($top_cancellations as $index => $cancellation): ?>
-                        <div class="top-performer">
-                            <div class="rank">#<?php echo $index + 1; ?></div>
-                            <div class="performer-info">
-                                <div class="performer-name"><?php echo esc_html($cancellation['name']); ?></div>
-                                <div class="performer-value"><?php echo $cancellation['cancelled_policies']; ?> iptal</div>
+                        <?php if (!empty($performance_metrics['most_cancellations'])): ?>
+                            <div class="top-performer">
+                                <div class="rank">#1</div>
+                                <div class="performer-info">
+                                    <div class="performer-name"><?php echo esc_html($performance_metrics['most_cancellations']->display_name); ?></div>
+                                    <div class="performer-value"><?php echo $performance_metrics['most_cancellations']->cancellation_count; ?> iptal</div>
+                                </div>
                             </div>
-                        </div>
-                        <?php endforeach; ?>
+                        <?php else: ?>
+                            <div class="empty-performers">Veri bulunamadı.</div>
+                        <?php endif; ?>
                     </div>
                 </div>
             </div>
             
-            <!-- PATRON - Ekip Performans Tablosu -->
+            <!-- PATRON/MÜDÜR - Ekip Performans Tablosu -->
             <div class="dashboard-card team-performance-card">
                 <div class="card-header">
                     <h3>Ekip Performansları</h3>
@@ -1677,7 +1926,7 @@ function insurance_crm_rep_panel_scripts() {
                 </div>
             </div>
 
-            <!-- PATRON - Temsilci Hedefleri ve Performansları -->
+            <!-- PATRON/MÜDÜR - Temsilci Hedefleri ve Performansları -->
             <div class="dashboard-card target-performance-card">
                 <div class="card-header">
                     <h3>Temsilci Performansları</h3>
@@ -1737,214 +1986,6 @@ function insurance_crm_rep_panel_scripts() {
                     <?php endif; ?>
                 </div>
             </div>
-            <?php elseif ($user_role == 'manager'): ?>
-            <!-- MÜDÜR DASHBOARD İÇERİĞİ -->
-            <div class="dashboard-header">
-                <h3>Ekipler Yönetimi</h3>
-                <p class="dashboard-subtitle">Sorumluluğunuz altındaki tüm ekipler ve ekip liderleri için performans metrikleri</p>
-            </div>
-            
-            <div class="stats-grid">
-                <div class="stat-box customers-box">
-                    <div class="stat-icon">
-                        <i class="dashicons dashicons-groups"></i>
-                    </div>
-                    <div class="stat-details">
-                        <div class="stat-value"><?php echo number_format($total_customers); ?></div>
-                        <div class="stat-label">Tüm Ekipler Toplam Müşteri</div>
-                    </div>
-                    <div class="stat-change positive">
-                        <div class="stat-new">
-                            Bu ay eklenen: +<?php echo $new_customers; ?> Müşteri
-                        </div>
-                        <div class="stat-rate positive">
-                            <i class="dashicons dashicons-arrow-up-alt"></i>
-                            <span><?php echo number_format($customer_increase_rate, 2); ?>%</span>
-                        </div>
-                    </div>
-                </div>
-                
-                <div class="stat-box policies-box">
-                    <div class="stat-icon">
-                        <i class="dashicons dashicons-portfolio"></i>
-                    </div>
-                    <div class="stat-details">
-                        <div class="stat-value"><?php echo number_format($total_policies); ?></div>
-                        <div class="stat-label">Tüm Ekipler Toplam Poliçe</div>
-                        <div class="refund-info">Toplam İade: ₺<?php echo number_format($total_refunded_amount, 2, ',', '.'); ?></div>
-                    </div>
-                    <div class="stat-change positive">
-                        <div class="stat-new">
-                            Bu ay eklenen: +<?php echo $new_policies; ?> Poliçe
-                        </div>
-                        <div class="stat-new refund-info">
-                            Bu ay iptal edilen: <?php echo $this_month_cancelled_policies; ?> Poliçe
-                        </div>
-                        <div class="stat-rate positive">
-                            <i class="dashicons dashicons-arrow-up-alt"></i>
-                            <span><?php echo number_format($policy_increase_rate, 2); ?>%</span>
-                        </div>
-                    </div>
-                </div>
-                
-                <div class="stat-box production-box">
-                    <div class="stat-icon">
-                        <i class="dashicons dashicons-chart-bar"></i>
-                    </div>
-                    <div class="stat-details">
-                        <div class="stat-value">₺<?php echo number_format($total_premium, 2, ',', '.'); ?></div>
-                        <div class="stat-label">Tüm Ekipler Toplam Üretim</div>
-                        <div class="refund-info">Toplam İade: ₺<?php echo number_format($total_refunded_amount, 2, ',', '.'); ?></div>
-                    </div>
-                    <div class="stat-change positive">
-                        <div class="stat-new">
-                            Bu ay eklenen: +₺<?php echo number_format($new_premium, 2, ',', '.'); ?>
-                        </div>
-                        <div class="stat-rate positive">
-                            <i class="dashicons dashicons-arrow-up-alt"></i>
-                            <span><?php echo number_format($premium_increase_rate, 2); ?>%</span>
-                        </div>
-                    </div>
-                </div>
-                
-                <div class="stat-box target-box">
-                    <div class="stat-icon">
-                        <i class="dashicons dashicons-performance"></i>
-                    </div>
-                    <div class="stat-details">
-                        <div class="stat-value">₺<?php echo number_format($current_month_premium, 2, ',', '.'); ?></div>
-                        <div class="stat-label">Tüm Ekipler Bu Ay Üretim</div>
-                    </div>
-                    <div class="stat-target">
-                        <div class="target-text">Toplam Hedef: ₺<?php echo number_format($monthly_target, 2, ',', '.'); ?></div>
-                        <?php
-                        $remaining_amount = max(0, $monthly_target - $current_month_premium);
-                        ?>
-                        <div class="target-text">Hedefe Kalan: ₺<?php echo number_format($remaining_amount, 2, ',', '.'); ?></div>
-                        <div class="target-progress-mini">
-                            <div class="target-bar" style="width: <?php echo $achievement_rate; ?>%"></div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            
-            <!-- MÜDÜR - Ekip Performans Tablosu -->
-            <div class="dashboard-card team-performance-card">
-                <div class="card-header">
-                    <h3>Ekip Performansları</h3>
-                    <div class="card-actions">
-                        <a href="<?php echo generate_panel_url('all_personnel'); ?>" class="text-button">Tüm Personel</a>
-                    </div>
-                </div>
-                <div class="card-body">
-                    <?php if (!empty($all_teams)): ?>
-                    <table class="data-table teams-table">
-                        <thead>
-                            <tr>
-                                <th>Ekip Adı</th>
-                                <th>Ekip Lideri</th>
-                                <th>Üye Sayısı</th>
-                                <th>Toplam Prim (₺)</th>
-                                <th>Aylık Hedef (₺)</th>
-                                <th>Bu Ay Üretim (₺)</th>
-                                <th>İptal Poliçe (₺)</th>
-                                <th>Net Prim (₺)</th>
-                                <th>Gerçekleşme</th>
-                                <th>İşlemler</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <?php foreach ($all_teams as $team): ?>
-                            <tr>
-                                <td><?php echo esc_html($team['name']); ?></td>
-                                <td><?php echo esc_html($team['leader_name'] . ' (' . $team['leader_title'] . ')'); ?></td>
-                                <td><?php echo $team['member_count']; ?> üye</td>
-                                <td class="amount-cell">₺<?php echo number_format($team['total_premium'], 2, ',', '.'); ?></td>
-                                <td class="amount-cell">₺<?php echo number_format($team['monthly_target'], 2, ',', '.'); ?></td>
-                                <td class="amount-cell">₺<?php echo number_format($team['month_premium'], 2, ',', '.'); ?></td>
-                                <td class="amount-cell negative-value">₺<?php echo number_format($team['cancelled_premium'], 2, ',', '.'); ?></td>
-                                <td class="amount-cell">₺<?php echo number_format($team['month_net_premium'], 2, ',', '.'); ?></td>
-                                <td>
-                                    <div class="progress-mini">
-                                        <div class="progress-bar" style="width: <?php echo min(100, $team['premium_achievement']); ?>%"></div>
-                                    </div>
-                                    <div class="progress-text"><?php echo number_format($team['premium_achievement'], 2); ?>%</div>
-                                </td>
-                                <td>
-                                    <a href="<?php echo generate_team_detail_url($team['id']); ?>" class="action-button view-button">
-                                        <i class="dashicons dashicons-visibility"></i>
-                                        <span>Detay</span>
-                                    </a>
-                                </td>
-                            </tr>
-                            <?php endforeach; ?>
-                        </tbody>
-                    </table>
-                    <?php else: ?>
-                    <div class="empty-state">
-                        <div class="empty-icon">
-                            <i class="dashicons dashicons-groups"></i>
-                        </div>
-                        <h4>Henüz ekip tanımlanmamış</h4>
-                        <p>Organizasyon yapısını düzenlemek için yönetim paneline gidin.</p>
-                    </div>
-                    <?php endif; ?>
-                </div>
-            </div>
-            
-            <!-- MÜDÜR - Temsilci Performans Tablosu -->
-            <div class="dashboard-card member-performance-card">
-                <div class="card-header">
-                    <h3>Temsilci Performansları</h3>
-                </div>
-                <div class="card-body">
-                    <?php if (!empty($member_performance)): ?>
-                    <table class="data-table">
-                        <thead>
-                            <tr>
-                                <th>Temsilci Adı</th>
-                                <th>Unvan</th>
-                                <th>Müşteri Sayısı</th>
-                                <th>Poliçe Sayısı</th>
-                                <th>Aylık Hedef (₺)</th>
-                                <th>Bu Ay Üretim (₺)</th>
-                                <th>Gerçekleşme</th>
-                                <th>İşlemler</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <?php foreach ($member_performance as $member): ?>
-                            <tr>
-                                <td><?php echo esc_html($member['name']); ?></td>
-                                <td><?php echo esc_html($member['title']); ?></td>
-                                <td><?php echo number_format($member['customers']); ?></td>
-                                <td><?php echo number_format($member['policies']); ?></td>
-                                <td>₺<?php echo number_format($member['monthly_target'], 2, ',', '.'); ?></td>
-                                <td>₺<?php echo number_format($member['this_month_premium'], 2, ',', '.'); ?></td>
-                                <td>
-                                    <div class="progress-mini">
-                                        <div class="progress-bar" style="width: <?php echo min(100, $member['premium_achievement_rate']); ?>%"></div>
-                                    </div>
-                                    <div class="progress-text"><?php echo number_format($member['premium_achievement_rate'], 2); ?>%</div>
-                                </td>
-                                <td>
-                                    <a href="<?php echo generate_panel_url('representative_detail', '', $member['id']); ?>" class="action-button view-button">
-                                        <i class="dashicons dashicons-visibility"></i>
-                                        <span>Detay</span>
-                                    </a>
-                                </td>
-                            </tr>
-                            <?php endforeach; ?>
-                        </tbody>
-                    </table>
-                    <?php else: ?>
-                    <div class="empty-state">
-                        <p>Henüz temsilci performans verisi bulunmamaktadır.</p>
-                    </div>
-                    <?php endif; ?>
-                </div>
-            </div>
-            
             <?php elseif ($current_view == 'team' && !is_team_leader($current_user->ID)): ?>
             <div class="empty-state">
                 <div class="empty-icon">
@@ -1955,11 +1996,57 @@ function insurance_crm_rep_panel_scripts() {
             </div>
            
 
-
 <?php elseif ($current_view == 'team'): ?>
-<div class="dashboard-header">
-    <h3>Ekip Performans Özeti</h3>
-    <p class="dashboard-subtitle">Ekibinizin performans göstergeleri ve hedef gerçekleşme durumu</p>
+<div class="dashboard-header-container">
+    <div class="dashboard-header">
+        <h3>Ekip Performans Özeti</h3>
+        <p class="dashboard-subtitle">Ekibinizin performans göstergeleri ve hedef gerçekleşme durumu</p>
+    </div>
+
+    <!-- Tarih Filtresi - SAĞ TARAFA ALINMIŞ HALDE -->
+    <div class="performance-date-filter">
+        <form method="get" action="<?php echo generate_panel_url('team'); ?>">
+            <input type="hidden" name="view" value="team">
+            
+            <div class="filter-group">
+                <label>Zaman Aralığı:</label>
+                <div class="filter-buttons">
+                    <a href="<?php echo add_date_filter_to_url(generate_panel_url('team'), 'this_month'); ?>" 
+                       class="filter-btn <?php echo $date_filter_period == 'this_month' ? 'active' : ''; ?>">Bu Ay</a>
+                    <a href="<?php echo add_date_filter_to_url(generate_panel_url('team'), 'last_3_months'); ?>" 
+                       class="filter-btn <?php echo $date_filter_period == 'last_3_months' ? 'active' : ''; ?>">Son 3 Ay</a>
+                    <a href="<?php echo add_date_filter_to_url(generate_panel_url('team'), 'last_6_months'); ?>" 
+                       class="filter-btn <?php echo $date_filter_period == 'last_6_months' ? 'active' : ''; ?>">Son 6 Ay</a>
+                    <a href="<?php echo add_date_filter_to_url(generate_panel_url('team'), 'this_year'); ?>" 
+                       class="filter-btn <?php echo $date_filter_period == 'this_year' ? 'active' : ''; ?>">Bu Yıl</a>
+                    <button type="button" id="custom-date-toggle" 
+                            class="filter-btn <?php echo $date_filter_period == 'custom' ? 'active' : ''; ?>">Tarih Aralığı</button>
+                </div>
+            </div>
+            
+            <div id="custom-date-container" class="custom-date-container" 
+                 style="<?php echo $date_filter_period == 'custom' ? 'display: flex;' : 'display: none;'; ?>">
+                <div class="date-inputs">
+                    <div class="date-field">
+                        <label for="start_date">Başlangıç:</label>
+                        <input type="date" name="start_date" id="start_date" 
+                               value="<?php echo esc_attr($custom_start_date); ?>" required>
+                    </div>
+                    <div class="date-field">
+                        <label for="end_date">Bitiş:</label>
+                        <input type="date" name="end_date" id="end_date" 
+                               value="<?php echo esc_attr($custom_end_date); ?>" required>
+                    </div>
+                    <input type="hidden" name="date_filter" value="custom">
+                    <button type="submit" class="submit-date-filter">Filtrele</button>
+                </div>
+            </div>
+        </form>
+        
+        <div class="current-filter">
+            <span>Gösterilen Veriler: <strong><?php echo $filter_title; ?></strong></span>
+        </div>
+    </div>
 </div>
 
 <div class="stats-grid">
@@ -1973,7 +2060,7 @@ function insurance_crm_rep_panel_scripts() {
         </div>
         <div class="stat-change positive">
             <div class="stat-new">
-                Bu ay eklenen: +<?php echo $new_customers; ?> Müşteri
+                <?php echo $filter_title; ?> eklenen: +<?php echo $new_customers; ?> Müşteri
             </div>
             <div class="stat-rate positive">
                 <i class="dashicons dashicons-arrow-up-alt"></i>
@@ -1993,10 +2080,10 @@ function insurance_crm_rep_panel_scripts() {
         </div>
         <div class="stat-change positive">
             <div class="stat-new">
-                Bu ay eklenen: +<?php echo $new_policies; ?> Poliçe
+                <?php echo $filter_title; ?> eklenen: +<?php echo $new_policies; ?> Poliçe
             </div>
             <div class="stat-new refund-info">
-                Bu ay iptal edilen: <?php echo $this_month_cancelled_policies; ?> Poliçe
+                <?php echo $filter_title; ?> iptal edilen: <?php echo $this_period_cancelled_policies; ?> Poliçe
             </div>
             <div class="stat-rate positive">
                 <i class="dashicons dashicons-arrow-up-alt"></i>
@@ -2016,7 +2103,10 @@ function insurance_crm_rep_panel_scripts() {
         </div>
         <div class="stat-change positive">
             <div class="stat-new">
-                Bu ay eklenen: +₺<?php echo number_format($new_premium, 2, ',', '.'); ?>
+                <?php echo $filter_title; ?> eklenen: +₺<?php echo number_format($new_premium, 2, ',', '.'); ?>
+            </div>
+            <div class="stat-new refund-info">
+                <?php echo $filter_title; ?> iptal edilen: ₺<?php echo number_format($period_refunded_amount, 2, ',', '.'); ?>
             </div>
             <div class="stat-rate positive">
                 <i class="dashicons dashicons-arrow-up-alt"></i>
@@ -2048,6 +2138,97 @@ function insurance_crm_rep_panel_scripts() {
             <div class="target-progress-mini">
                 <div class="target-bar" style="width: <?php echo $policy_achievement_rate; ?>%"></div>
             </div>
+        </div>
+    </div>
+</div>
+
+<!-- 4 performans kutusu - tüm yetki seviyelerinde aynı yerde gösterilecek -->
+<div class="performance-stats-grid">
+    <div class="stat-box top-producers-box">
+        <div class="stat-icon">
+            <i class="fas fa-trophy"></i>
+        </div>
+        <div class="stat-details">
+            <div class="stat-title">En Çok Üretim Yapan</div>
+        </div>
+        <div class="top-performers">
+            <?php if (!empty($performance_metrics['top_producer'])): ?>
+                <div class="top-performer">
+                    <div class="rank">#1</div>
+                    <div class="performer-info">
+                        <div class="performer-name"><?php echo esc_html($performance_metrics['top_producer']->display_name); ?></div>
+                        <div class="performer-value">₺<?php echo number_format($performance_metrics['top_producer']->total_premium, 2, ',', '.'); ?></div>
+                    </div>
+                </div>
+            <?php else: ?>
+                <div class="empty-performers">Veri bulunamadı.</div>
+            <?php endif; ?>
+        </div>
+    </div>
+    
+    <div class="stat-box top-new-business-box">
+        <div class="stat-icon">
+            <i class="fas fa-rocket"></i>
+        </div>
+        <div class="stat-details">
+            <div class="stat-title">En Çok Yeni İş</div>
+        </div>
+        <div class="top-performers">
+            <?php if (!empty($performance_metrics['most_new_business'])): ?>
+                <div class="top-performer">
+                    <div class="rank">#1</div>
+                    <div class="performer-info">
+                        <div class="performer-name"><?php echo esc_html($performance_metrics['most_new_business']->display_name); ?></div>
+                        <div class="performer-value"><?php echo $performance_metrics['most_new_business']->policy_count; ?> poliçe</div>
+                    </div>
+                </div>
+            <?php else: ?>
+                <div class="empty-performers">Veri bulunamadı.</div>
+            <?php endif; ?>
+        </div>
+    </div>
+    
+    <div class="stat-box top-new-customers-box">
+        <div class="stat-icon">
+            <i class="fas fa-user-plus"></i>
+        </div>
+        <div class="stat-details">
+            <div class="stat-title">En Çok Yeni Müşteri</div>
+        </div>
+        <div class="top-performers">
+            <?php if (!empty($performance_metrics['most_new_customers'])): ?>
+                <div class="top-performer">
+                    <div class="rank">#1</div>
+                    <div class="performer-info">
+                        <div class="performer-name"><?php echo esc_html($performance_metrics['most_new_customers']->display_name); ?></div>
+                        <div class="performer-value"><?php echo $performance_metrics['most_new_customers']->customer_count; ?> müşteri</div>
+                    </div>
+                </div>
+            <?php else: ?>
+                <div class="empty-performers">Veri bulunamadı.</div>
+            <?php endif; ?>
+        </div>
+    </div>
+    
+    <div class="stat-box top-cancellations-box">
+        <div class="stat-icon">
+            <i class="fas fa-exclamation-triangle"></i>
+        </div>
+        <div class="stat-details">
+            <div class="stat-title">En Çok İptali Olan</div>
+        </div>
+        <div class="top-performers">
+            <?php if (!empty($performance_metrics['most_cancellations'])): ?>
+                <div class="top-performer">
+                    <div class="rank">#1</div>
+                    <div class="performer-info">
+                        <div class="performer-name"><?php echo esc_html($performance_metrics['most_cancellations']->display_name); ?></div>
+                        <div class="performer-value"><?php echo $performance_metrics['most_cancellations']->cancellation_count; ?> iptal</div>
+                    </div>
+                </div>
+            <?php else: ?>
+                <div class="empty-performers">Veri bulunamadı.</div>
+            <?php endif; ?>
         </div>
     </div>
 </div>
@@ -2188,12 +2369,120 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         });
     }
+    
+    // Prodüksiyon Grafiği
+    const productionChart = document.getElementById('productionChart');
+    if (productionChart) {
+        const monthlyProduction = <?php echo json_encode($monthly_production); ?>;
+        
+        const labels = monthlyProduction.map(item => {
+            const [year, month] = item.month.split('-');
+            const months = ['Oca', 'Şub', 'Mar', 'Nis', 'May', 'Haz', 
+                         'Tem', 'Ağu', 'Eyl', 'Eki', 'Kas', 'Ara'];
+            return months[parseInt(month) - 1] + ' ' + year;
+        });
+        
+        const data = monthlyProduction.map(item => item.total);
+        
+        new Chart(productionChart, {
+            type: 'bar',
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: 'Aylık Üretim (₺)',
+                    data: data,
+                    backgroundColor: 'rgba(0, 115, 170, 0.6)',
+                    borderColor: 'rgba(0, 115, 170, 1)',
+                    borderWidth: 1
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        ticks: {
+                            callback: function(value) {
+                                return '₺' + value.toLocaleString('tr-TR');
+                            }
+                        }
+                    }
+                },
+                plugins: {
+                    legend: {
+                        display: false
+                    },
+                    tooltip: {
+                        callbacks: {
+                            label: function(context) {
+                                return '₺' + context.parsed.y.toLocaleString('tr-TR');
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
 });
 </script>
 
 
             <?php else: ?>
             <!-- NORMAL DASHBOARD VEYA EKİP LİDERİ DASHBOARD İÇERİĞİ -->
+            
+            <div class="dashboard-header-container">
+                <div class="dashboard-header">
+                    <h3><?php echo $current_view == 'team' ? 'Ekip Performans Raporu' : 'Dashboard'; ?></h3>
+                    <p class="dashboard-subtitle">
+                        <?php echo $current_view == 'team' ? 'Ekibinizin performans özeti ve raporları' : 'Performans ve aktivite özeti'; ?>
+                    </p>
+                </div>
+                
+                <!-- Tarih Filtresi - SAĞ TARAFA ALINMIŞ HALDE -->
+                <div class="performance-date-filter">
+                    <form method="get" action="<?php echo generate_panel_url('dashboard'); ?>">
+                        <div class="filter-group">
+                            <label>Zaman Aralığı:</label>
+                            <div class="filter-buttons">
+                                <a href="<?php echo add_date_filter_to_url(generate_panel_url('dashboard'), 'this_month'); ?>" 
+                                   class="filter-btn <?php echo $date_filter_period == 'this_month' ? 'active' : ''; ?>">Bu Ay</a>
+                                <a href="<?php echo add_date_filter_to_url(generate_panel_url('dashboard'), 'last_3_months'); ?>" 
+                                   class="filter-btn <?php echo $date_filter_period == 'last_3_months' ? 'active' : ''; ?>">Son 3 Ay</a>
+                                <a href="<?php echo add_date_filter_to_url(generate_panel_url('dashboard'), 'last_6_months'); ?>" 
+                                   class="filter-btn <?php echo $date_filter_period == 'last_6_months' ? 'active' : ''; ?>">Son 6 Ay</a>
+                                <a href="<?php echo add_date_filter_to_url(generate_panel_url('dashboard'), 'this_year'); ?>" 
+                                   class="filter-btn <?php echo $date_filter_period == 'this_year' ? 'active' : ''; ?>">Bu Yıl</a>
+                                <button type="button" id="custom-date-toggle" 
+                                        class="filter-btn <?php echo $date_filter_period == 'custom' ? 'active' : ''; ?>">Tarih Aralığı</button>
+                            </div>
+                        </div>
+                        
+                        <div id="custom-date-container" class="custom-date-container" 
+                             style="<?php echo $date_filter_period == 'custom' ? 'display: flex;' : 'display: none;'; ?>">
+                            <div class="date-inputs">
+                                <div class="date-field">
+                                    <label for="start_date">Başlangıç:</label>
+                                    <input type="date" name="start_date" id="start_date" 
+                                           value="<?php echo esc_attr($custom_start_date); ?>" required>
+                                </div>
+                                <div class="date-field">
+                                    <label for="end_date">Bitiş:</label>
+                                    <input type="date" name="end_date" id="end_date" 
+                                           value="<?php echo esc_attr($custom_end_date); ?>" required>
+                                </div>
+                                <input type="hidden" name="date_filter" value="custom">
+                                <button type="submit" class="submit-date-filter">Filtrele</button>
+                            </div>
+                        </div>
+                    </form>
+                    
+                    <div class="current-filter">
+                        <span>Gösterilen Veriler: <strong><?php echo $filter_title; ?></strong></span>
+                    </div>
+                </div>
+            </div>
+            
             <div class="stats-grid">
                 <div class="stat-box customers-box">
                     <div class="stat-icon">
@@ -2205,7 +2494,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     </div>
                     <div class="stat-change positive">
                         <div class="stat-new">
-                            Bu ay eklenen: +<?php echo $new_customers; ?> Müşteri
+                            <?php echo $filter_title; ?> eklenen: +<?php echo $new_customers; ?> Müşteri
                         </div>
                         <div class="stat-rate positive">
                             <i class="dashicons dashicons-arrow-up-alt"></i>
@@ -2225,10 +2514,10 @@ document.addEventListener('DOMContentLoaded', function() {
                     </div>
                     <div class="stat-change positive">
                         <div class="stat-new">
-                            Bu ay eklenen: +<?php echo $new_policies; ?> Poliçe
+                            <?php echo $filter_title; ?> eklenen: +<?php echo $new_policies; ?> Poliçe
                         </div>
                         <div class="stat-new refund-info">
-                            Bu ay iptal edilen: <?php echo $this_month_cancelled_policies; ?> Poliçe
+                            <?php echo $filter_title; ?> iptal edilen: <?php echo $this_period_cancelled_policies; ?> Poliçe
                         </div>
                         <div class="stat-rate positive">
                             <i class="dashicons dashicons-arrow-up-alt"></i>
@@ -2248,7 +2537,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     </div>
                     <div class="stat-change positive">
                         <div class="stat-new">
-                            Bu ay eklenen: +₺<?php echo number_format($new_premium, 2, ',', '.'); ?>
+                            <?php echo $filter_title; ?> eklenen: +₺<?php echo number_format($new_premium, 2, ',', '.'); ?>
                         </div>
                         <div class="stat-rate positive">
                             <i class="dashicons dashicons-arrow-up-alt"></i>
@@ -2280,6 +2569,97 @@ document.addEventListener('DOMContentLoaded', function() {
                         <div class="target-progress-mini">
                             <div class="target-bar" style="width: <?php echo $policy_achievement_rate; ?>%"></div>
                         </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 4 performans kutusu - tüm yetki seviyelerinde aynı yerde gösterilecek -->
+            <div class="performance-stats-grid">
+                <div class="stat-box top-producers-box">
+                    <div class="stat-icon">
+                        <i class="fas fa-trophy"></i>
+                    </div>
+                    <div class="stat-details">
+                        <div class="stat-title">En Çok Üretim Yapan</div>
+                    </div>
+                    <div class="top-performers">
+                        <?php if (!empty($performance_metrics['top_producer'])): ?>
+                            <div class="top-performer">
+                                <div class="rank">#1</div>
+                                <div class="performer-info">
+                                    <div class="performer-name"><?php echo esc_html($performance_metrics['top_producer']->display_name); ?></div>
+                                    <div class="performer-value">₺<?php echo number_format($performance_metrics['top_producer']->total_premium, 2, ',', '.'); ?></div>
+                                </div>
+                            </div>
+                        <?php else: ?>
+                            <div class="empty-performers">Veri bulunamadı.</div>
+                        <?php endif; ?>
+                    </div>
+                </div>
+                
+                <div class="stat-box top-new-business-box">
+                    <div class="stat-icon">
+                        <i class="fas fa-rocket"></i>
+                    </div>
+                    <div class="stat-details">
+                        <div class="stat-title">En Çok Yeni İş</div>
+                    </div>
+                    <div class="top-performers">
+                        <?php if (!empty($performance_metrics['most_new_business'])): ?>
+                            <div class="top-performer">
+                                <div class="rank">#1</div>
+                                <div class="performer-info">
+                                    <div class="performer-name"><?php echo esc_html($performance_metrics['most_new_business']->display_name); ?></div>
+                                    <div class="performer-value"><?php echo $performance_metrics['most_new_business']->policy_count; ?> poliçe</div>
+                                </div>
+                            </div>
+                        <?php else: ?>
+                            <div class="empty-performers">Veri bulunamadı.</div>
+                        <?php endif; ?>
+                    </div>
+                </div>
+                
+                <div class="stat-box top-new-customers-box">
+                    <div class="stat-icon">
+                        <i class="fas fa-user-plus"></i>
+                    </div>
+                    <div class="stat-details">
+                        <div class="stat-title">En Çok Yeni Müşteri</div>
+                    </div>
+                    <div class="top-performers">
+                        <?php if (!empty($performance_metrics['most_new_customers'])): ?>
+                            <div class="top-performer">
+                                <div class="rank">#1</div>
+                                <div class="performer-info">
+                                    <div class="performer-name"><?php echo esc_html($performance_metrics['most_new_customers']->display_name); ?></div>
+                                    <div class="performer-value"><?php echo $performance_metrics['most_new_customers']->customer_count; ?> müşteri</div>
+                                </div>
+                            </div>
+                        <?php else: ?>
+                            <div class="empty-performers">Veri bulunamadı.</div>
+                        <?php endif; ?>
+                    </div>
+                </div>
+                
+                <div class="stat-box top-cancellations-box">
+                    <div class="stat-icon">
+                        <i class="fas fa-exclamation-triangle"></i>
+                    </div>
+                    <div class="stat-details">
+                        <div class="stat-title">En Çok İptali Olan</div>
+                    </div>
+                    <div class="top-performers">
+                        <?php if (!empty($performance_metrics['most_cancellations'])): ?>
+                            <div class="top-performer">
+                                <div class="rank">#1</div>
+                                <div class="performer-info">
+                                    <div class="performer-name"><?php echo esc_html($performance_metrics['most_cancellations']->display_name); ?></div>
+                                    <div class="performer-value"><?php echo $performance_metrics['most_cancellations']->cancellation_count; ?> iptal</div>
+                                </div>
+                            </div>
+                        <?php else: ?>
+                            <div class="empty-performers">Veri bulunamadı.</div>
+                        <?php endif; ?>
                     </div>
                 </div>
             </div>
@@ -2374,28 +2754,19 @@ document.addEventListener('DOMContentLoaded', function() {
                             </div>
                         </div>
                     </div>    
+
                     <?php
-                    if (!$representative) {
-                        echo '<div class="ab-notice ab-error">Müşteri temsilcisi kaydınız bulunamadı veya hesabınız pasif durumda.</div>';
-                    } else {
+                    // Görev yönetimi fonksiyonlarını dahil et
+                    if (file_exists(dirname(__FILE__) . '/modules/task-management/task-functions.php')) {
+                        include_once dirname(__FILE__) . '/modules/task-management/task-functions.php';
+                    }
+                    
+                    // Görev özeti widget'ını dahil et
+                    if (file_exists(dirname(__FILE__) . '/tasks-dashboard-widget.php')) {
+                        include_once dirname(__FILE__) . '/tasks-dashboard-widget.php';
+                    }
                     ?>
-                      
-<?php
-// Görev yönetimi fonksiyonlarını dahil et
-include_once dirname(__FILE__) . '/modules/task-management/task-functions.php';
-?>
 
-
-<?php
-if (!$representative) {
-    echo '<div class="ab-notice ab-error">Müşteri temsilcisi kaydınız bulunamadı veya hesabınız pasif durumda.</div>';
-} else {
-    // Görev özeti widget'ını dahil et
-    include_once dirname(__FILE__) . '/tasks-dashboard-widget.php';
-}
-?>                   
-
-                    <?php } ?>
                 </div>
                 
                 <div class="lower-section">
@@ -2751,6 +3122,256 @@ if (!$representative) {
                     </div>
                 </div>
             </div>
+        <?php elseif ($current_view == 'organization'): ?>
+            <div class="main-content">
+                <div class="dashboard-card">
+                    <div class="card-header">
+                        <h3>Organizasyon Yönetimi</h3>
+                        <div class="card-actions">
+                            <a href="<?php echo generate_panel_url('dashboard'); ?>" class="text-button">Dashboard'a Dön</a>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div class="organization-management">
+                            <h4>Yönetim Hiyerarşisi</h4>
+                            
+                            <?php
+                            // Mevcut temsilciler ve rolleri al
+                            $representatives = $wpdb->get_results(
+                                "SELECT r.*, u.display_name, u.user_email 
+                                 FROM {$wpdb->prefix}insurance_crm_representatives r 
+                                 LEFT JOIN {$wpdb->users} u ON r.user_id = u.ID 
+                                 WHERE r.status = 'active'
+                                 ORDER BY r.role ASC, u.display_name ASC"
+                            );
+                            
+                            $current_hierarchy = get_management_hierarchy();
+                            
+                            // Mevcut rollerine göre temsilcileri ayır
+                            $patrons = array_filter($representatives, function($rep) { return intval($rep->role) == 1; });
+                            $managers = array_filter($representatives, function($rep) { return intval($rep->role) == 2; });
+                            $assistants = array_filter($representatives, function($rep) { return intval($rep->role) == 3; });
+                            $team_leaders = array_filter($representatives, function($rep) { return intval($rep->role) == 4; });
+                            $representatives_only = array_filter($representatives, function($rep) { return intval($rep->role) == 5; });
+                            
+                            // Form işleme
+                            $success_message = '';
+                            $error_message = '';
+                            
+                            if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_organization'])) {
+                                // Güvenlik kontrolü
+                                if (!has_full_admin_access($current_user->ID)) {
+                                    $error_message = 'Bu işlem için yetkiniz bulunmuyor.';
+                                } else {
+                                    $new_hierarchy = [
+                                        'patron_id' => intval($_POST['patron_id'] ?? 0),
+                                        'manager_id' => intval($_POST['manager_id'] ?? 0),
+                                        'assistant_manager_ids' => isset($_POST['assistant_manager_ids']) ? array_map('intval', (array)$_POST['assistant_manager_ids']) : []
+                                    ];
+                                    
+                                    if (update_management_hierarchy($new_hierarchy)) {
+                                        $success_message = 'Organizasyon yapısı başarıyla güncellendi.';
+                                        $current_hierarchy = $new_hierarchy;
+                                        
+                                        // Rolleri güncelle
+                                        foreach ($representatives as $rep) {
+                                            $new_role = 5; // Varsayılan olarak temsilci
+                                            
+                                            if ($rep->id == $new_hierarchy['patron_id']) {
+                                                $new_role = 1; // Patron
+                                            } elseif ($rep->id == $new_hierarchy['manager_id']) {
+                                                $new_role = 2; // Müdür
+                                            } elseif (in_array($rep->id, $new_hierarchy['assistant_manager_ids'])) {
+                                                $new_role = 3; // Müdür Yardımcısı
+                                            }
+                                            
+                                            // Ekip lideri rolünü koruması için kontrol - teams tablosunu kontrol et
+                                            if ($new_role == 5) { // Eğer diğer roller atanmamışsa ekip lideri olup olmadığını kontrol et
+                                                $is_team_leader = false;
+                                                $teams = isset($settings['teams_settings']['teams']) ? $settings['teams_settings']['teams'] : array();
+                                                foreach ($teams as $team) {
+                                                    if ($team['leader_id'] == $rep->id) {
+                                                        $is_team_leader = true;
+                                                        break;
+                                                    }
+                                                }
+                                                
+                                                if ($is_team_leader) {
+                                                    $new_role = 4; // Ekip Lideri
+                                                }
+                                            }
+                                            
+                                            // Rol değişikliği varsa güncelle
+                                            if ($rep->role != $new_role) {
+                                                $wpdb->update(
+                                                    $wpdb->prefix . 'insurance_crm_representatives',
+                                                    ['role' => $new_role],
+                                                    ['id' => $rep->id]
+                                                );
+                                            }
+                                        }
+                                        
+                                        // Sayfayı yenile
+                                        echo '<meta http-equiv="refresh" content="1;url=' . generate_panel_url('organization') . '">';
+                                    } else {
+                                        $error_message = 'Organizasyon yapısı güncellenirken bir hata oluştu.';
+                                    }
+                                }
+                            }
+                            ?>
+                            
+                            <?php if ($success_message): ?>
+                                <div class="alert alert-success">
+                                    <i class="fas fa-check-circle"></i> <?php echo $success_message; ?>
+                                </div>
+                            <?php endif; ?>
+                            
+                            <?php if ($error_message): ?>
+                                <div class="alert alert-danger">
+                                    <i class="fas fa-exclamation-triangle"></i> <?php echo $error_message; ?>
+                                </div>
+                            <?php endif; ?>
+                            
+                            <form action="<?php echo generate_panel_url('organization'); ?>" method="post" class="organization-form">
+                                <div class="org-chart">
+                                    <div class="org-level">
+                                        <div class="org-box patron-box">
+                                            <div class="org-title">Patron</div>
+                                            <select name="patron_id" class="org-select">
+                                                <option value="0">Seçiniz</option>
+                                                <?php foreach ($representatives as $rep): ?>
+                                                    <option value="<?php echo $rep->id; ?>" <?php selected($current_hierarchy['patron_id'], $rep->id); ?>>
+                                                        <?php echo esc_html($rep->display_name); ?> (<?php echo esc_html($rep->title); ?>)
+                                                    </option>
+                                                <?php endforeach; ?>
+                                            </select>
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="org-connector"></div>
+                                    
+                                    <div class="org-level">
+                                        <div class="org-box manager-box">
+                                            <div class="org-title">Müdür</div>
+                                            <select name="manager_id" class="org-select">
+                                                <option value="0">Seçiniz</option>
+                                                <?php foreach ($representatives as $rep): ?>
+                                                    <option value="<?php echo $rep->id; ?>" <?php selected($current_hierarchy['manager_id'], $rep->id); ?>>
+                                                        <?php echo esc_html($rep->display_name); ?> (<?php echo esc_html($rep->title); ?>)
+                                                    </option>
+                                                <?php endforeach; ?>
+                                            </select>
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="org-connector"></div>
+                                    
+                                    <div class="org-level">
+                                        <div class="org-box assistant-manager-box">
+                                            <div class="org-title">Müdür Yardımcıları</div>
+                                            <select name="assistant_manager_ids[]" class="org-select" multiple size="3">
+                                                <?php foreach ($representatives as $rep): ?>
+                                                    <option value="<?php echo $rep->id; ?>" <?php if (in_array($rep->id, $current_hierarchy['assistant_manager_ids'])) echo 'selected'; ?>>
+                                                        <?php echo esc_html($rep->display_name); ?> (<?php echo esc_html($rep->title); ?>)
+                                                    </option>
+                                                <?php endforeach; ?>
+                                            </select>
+                                            <div class="helper-text">Ctrl tuşu ile birden fazla seçim yapabilirsiniz.</div>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div class="org-actions">
+                                    <button type="submit" name="update_organization" class="btn btn-primary">
+                                        <i class="fas fa-save"></i> Organizasyon Yapısını Kaydet
+                                    </button>
+                                    <a href="<?php echo generate_panel_url('dashboard'); ?>" class="btn btn-secondary">
+                                        <i class="fas fa-times"></i> Vazgeç
+                                    </a>
+                                </div>
+                            </form>
+                            
+                            <div class="team-management">
+                                <h4>Ekip Yönetimi</h4>
+                                <div class="teams-container">
+                                    <?php 
+                                    $teams = isset($settings['teams_settings']['teams']) ? $settings['teams_settings']['teams'] : array();
+                                    if (!empty($teams)):
+                                    ?>
+                                    <div class="team-cards">
+                                        <?php foreach ($teams as $team_id => $team): 
+                                            $leader = null;
+                                            foreach ($representatives as $rep) {
+                                                if ($rep->id == $team['leader_id']) {
+                                                    $leader = $rep;
+                                                    break;
+                                                }
+                                            }
+                                            if (!$leader) continue;
+                                            
+                                            $member_count = count($team['members']);
+                                        ?>
+                                        <div class="team-card">
+                                            <div class="team-card-header">
+                                                <h5><?php echo esc_html($team['name']); ?></h5>
+                                                <div class="team-actions">
+                                                    <a href="<?php echo generate_panel_url('edit_team', '', '', array('team_id' => $team_id)); ?>" class="btn-sm btn-outline">
+                                                        <i class="fas fa-edit"></i> Düzenle
+                                                    </a>
+                                                </div>
+                                            </div>
+                                            <div class="team-card-body">
+                                                <div class="team-leader">
+                                                    <div class="member-avatar">
+                                                        <?php if (!empty($leader->avatar_url)): ?>
+                                                            <img src="<?php echo esc_url($leader->avatar_url); ?>" alt="<?php echo esc_attr($leader->display_name); ?>">
+                                                        <?php else: ?>
+                                                            <?php echo esc_html(substr($leader->display_name, 0, 2)); ?>
+                                                        <?php endif; ?>
+                                                    </div>
+                                                    <div class="member-details">
+                                                        <div class="member-name"><?php echo esc_html($leader->display_name); ?></div>
+                                                        <div class="member-title"><?php echo esc_html($leader->title); ?></div>
+                                                        <div class="member-role">Ekip Lideri</div>
+                                                    </div>
+                                                </div>
+                                                <div class="team-members-count">
+                                                    <i class="fas fa-users"></i> <?php echo $member_count; ?> Üye
+                                                </div>
+                                                <a href="<?php echo generate_team_detail_url($team_id); ?>" class="team-detail-link">
+                                                    Ekip Detayı <i class="fas fa-chevron-right"></i>
+                                                </a>
+                                            </div>
+                                        </div>
+                                        <?php endforeach; ?>
+                                        
+                                        <div class="team-card add-team-card">
+                                            <a href="<?php echo generate_panel_url('team_add'); ?>">
+                                                <div class="add-team-icon">
+                                                    <i class="fas fa-plus"></i>
+                                                </div>
+                                                <div class="add-team-text">Yeni Ekip Oluştur</div>
+                                            </a>
+                                        </div>
+                                    </div>
+                                    <?php else: ?>
+                                    <div class="empty-state">
+                                        <div class="empty-icon">
+                                            <i class="fas fa-users"></i>
+                                        </div>
+                                        <h4>Henüz ekip oluşturulmadı</h4>
+                                        <p>Yeni bir ekip oluşturmak için aşağıdaki butona tıklayın.</p>
+                                        <a href="<?php echo generate_panel_url('team_add'); ?>" class="btn btn-primary">
+                                            <i class="fas fa-plus"></i> Yeni Ekip Oluştur
+                                        </a>
+                                    </div>
+                                    <?php endif; ?>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
         <?php elseif ($current_view == 'representative_add'): ?>
             <?php include_once(dirname(__FILE__) . '/representative_add.php'); ?>
         <?php elseif ($current_view == 'team_add'): ?>
@@ -3076,6 +3697,34 @@ if (!$representative) {
                 transform: translateY(-50%);
                 color: #666;
             }
+
+            .dashboard-header-container {
+                display: flex;
+                justify-content: space-between;
+                align-items: flex-start;
+                margin-bottom: 20px;
+            }
+            
+            .dashboard-header {
+                flex: 1;
+            }
+            
+            .performance-date-filter {
+                background-color: #fff;
+                border-radius: 10px;
+                padding: 15px;
+                box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+                min-width: 320px;
+                max-width: 400px;
+                align-self: flex-start;
+            }
+            
+            .performance-stats-grid {
+                display: grid;
+                grid-template-columns: repeat(4, 1fr);
+                gap: 20px;
+                margin-bottom: 30px;
+            }
             
             .notification-bell {
                 position: relative;
@@ -3193,39 +3842,37 @@ if (!$representative) {
                 color: #777;
             }
             
+            .notifications-footer {
+                padding: 15px 10px;
+                text-align: center;
+                border-top: 1px solid #eee;
+            }
 
-.notifications-footer {
-    padding: 15px 10px;
-    text-align: center;
-    border-top: 1px solid #eee;
-}
+            .notifications-footer a {
+                display: block;
+                width: 100%;
+                padding: 8px 0;
+                margin: 10px 0;
+                text-decoration: none;
+                color: #333;
+                border-radius: 4px;
+                font-size: 14px;
+                letter-spacing: 0.5px;
+                box-sizing: border-box;
+            }
 
-.notifications-footer a {
-    display: block; /* Alana tam yayılmasını sağlar */
-    width: 100%; /* Genişlik %100, alanı kaplar */
-    padding: 8px 0; /* Sağ-sol padding'i sıfırlayıp üst-alt 8px */
-    margin: 10px 0;
-    text-decoration: none;
-    color: #333;
-    border-radius: 4px;
-    font-size: 14px; /* Font boyutunu küçült */
-    letter-spacing: 0.5px; /* Harfler arası boşluk artır */
-    box-sizing: border-box; /* Padding'in genişliği etkilemesini önler */
-}
+            .notifications-footer a:hover {
+                background-color: #f5f5f5;
+            }
 
-.notifications-footer a:hover {
-    background-color: #f5f5f5;
-}
+            .notifications-list {
+                margin-bottom: 15px;
+            }
 
-.notifications-list {
-    margin-bottom: 15px;
-}
-
-.notification-item {
-    padding: 10px;
-    margin-bottom: 5px;
-}
-
+            .notification-item {
+                padding: 10px;
+                margin-bottom: 5px;
+            }
             
             .quick-actions {
                 position: relative;
@@ -3305,6 +3952,108 @@ if (!$representative) {
             
             .dashboard-subtitle {
                 font-size: 16px;
+                color: #666;
+            }
+            
+            /* Tarih Filtresi Stilleri */
+            .filter-group {
+                margin-bottom: 15px;
+            }
+            
+            .filter-group label {
+                display: block;
+                font-weight: 600;
+                margin-bottom: 8px;
+                color: #333;
+            }
+            
+            .filter-buttons {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 10px;
+            }
+            
+            .filter-btn {
+                background: #f0f2f5;
+                border: 1px solid #ddd;
+                border-radius: 4px;
+                padding: 6px 12px;
+                font-size: 14px;
+                color: #333;
+                cursor: pointer;
+                transition: all 0.2s;
+                text-decoration: none;
+                display: inline-block;
+            }
+            
+            .filter-btn:hover {
+                background: #e4e6e9;
+                border-color: #ccc;
+            }
+            
+            .filter-btn.active {
+                background: #0073aa;
+                color: white;
+                border-color: #005c88;
+            }
+            
+            .custom-date-container {
+                margin-top: 10px;
+                display: flex;
+                flex-direction: column;
+                gap: 10px;
+                background-color: #f9f9f9;
+                padding: 15px;
+                border-radius: 8px;
+                border: 1px solid #eee;
+            }
+            
+            .date-inputs {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 15px;
+                align-items: flex-end;
+            }
+            
+            .date-field {
+                display: flex;
+                flex-direction: column;
+                gap: 5px;
+                flex: 1;
+            }
+            
+            .date-field label {
+                font-size: 14px;
+                color: #555;
+            }
+            
+            .date-field input[type="date"] {
+                padding: 8px 12px;
+                border: 1px solid #ddd;
+                border-radius: 4px;
+                font-size: 14px;
+            }
+            
+            .submit-date-filter {
+                background: #0073aa;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 8px 16px;
+                cursor: pointer;
+                transition: background 0.2s;
+                font-size: 14px;
+            }
+            
+            .submit-date-filter:hover {
+                background: #005c88;
+            }
+            
+            .current-filter {
+                margin-top: 10px;
+                padding-top: 10px;
+                border-top: 1px solid #eee;
+                font-size: 14px;
                 color: #666;
             }
             
@@ -3457,6 +4206,14 @@ if (!$representative) {
                 font-size: 13px;
                 font-weight: 600;
                 color: #0073aa;
+            }
+            
+            .empty-performers {
+                text-align: center;
+                color: #666;
+                padding: 10px;
+                font-style: italic;
+                font-size: 14px;
             }
             
             .stat-change {
@@ -3651,18 +4408,26 @@ if (!$representative) {
                 padding: 20px;
                 border-radius: 8px;
                 text-align: center;
-                width: 200px;
+                width: 260px;
                 box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+                background-color: #fff;
             }
             
             .patron-box {
-                background-color: #f0f7ff;
                 border: 2px solid #4a89dc;
+                background-color: #f0f7ff;
             }
             
             .manager-box {
-                background-color: #fff5f0;
                 border: 2px solid #e8864a;
+                background-color: #fff5f0;
+            }
+            
+            .assistant-manager-box {
+                border: 2px solid #52acff;
+                background-color: #f0f7ff;
+                width: 100%;
+                max-width: 500px;
             }
             
             .team-leader-box {
@@ -3679,8 +4444,29 @@ if (!$representative) {
             .org-title {
                 font-weight: bold;
                 font-size: 16px;
-                margin-bottom: 5px;
+                margin-bottom: 12px;
                 color: #444;
+            }
+            
+            .org-select {
+                width: 100%;
+                padding: 8px 12px;
+                border: 1px solid #ddd;
+                border-radius: 4px;
+                background-color: #fff;
+                font-size: 14px;
+                color: #333;
+            }
+            
+            .org-select[multiple] {
+                height: 120px;
+            }
+            
+            .helper-text {
+                font-size: 12px;
+                color: #666;
+                margin-top: 8px;
+                font-style: italic;
             }
             
             .org-name {
@@ -3718,9 +4504,235 @@ if (!$representative) {
                 display: flex;
                 justify-content: center;
                 gap: 15px;
+                margin-top: 30px;
+            }
+            
+            .org-actions .btn {
+                padding: 10px 20px;
+                font-size: 14px;
+            }
+            
+            .team-management {
+                margin-top: 50px;
+            }
+            
+            .team-management h4 {
+                font-size: 18px;
+                margin-bottom: 20px;
+                padding-bottom: 10px;
+                border-bottom: 1px solid #eee;
+            }
+            
+            .team-cards {
+                display: grid;
+                grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+                gap: 20px;
                 margin-top: 20px;
             }
             
+            .team-card {
+                background-color: #fff;
+                border-radius: 8px;
+                box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+                overflow: hidden;
+                transition: transform 0.3s ease, box-shadow 0.3s ease;
+            }
+            
+            .team-card:hover {
+                transform: translateY(-3px);
+                box-shadow: 0 4px 10px rgba(0,0,0,0.15);
+            }
+            
+            .team-card-header {
+                padding: 15px;
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                background-color: #f8f9fa;
+                border-bottom: 1px solid #eee;
+            }
+            
+            .team-card-header h5 {
+                font-size: 16px;
+                margin: 0;
+                color: #333;
+                font-weight: 600;
+            }
+            
+            .team-card-body {
+                padding: 15px;
+            }
+            
+            .team-leader {
+                display: flex;
+                align-items: center;
+                margin-bottom: 15px;
+                padding-bottom: 15px;
+                border-bottom: 1px solid #eee;
+            }
+            
+            .member-avatar {
+                width: 50px;
+                height: 50px;
+                border-radius: 25px;
+                background-color: #e9ecef;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-size: 18px;
+                font-weight: 500;
+                color: #495057;
+                margin-right: 15px;
+                overflow: hidden;
+            }
+            
+            .member-avatar img {
+                width: 100%;
+                height: 100%;
+                object-fit: cover;
+            }
+            
+            .member-details {
+                flex: 1;
+            }
+            
+            .member-name {
+                font-weight: 500;
+                font-size: 15px;
+                color: #333;
+            }
+            
+            .member-title {
+                font-size: 13px;
+                color: #666;
+            }
+            
+            .member-role {
+                font-size: 12px;
+                color: #0073aa;
+                margin-top: 2px;
+            }
+            
+            .team-members-count {
+                display: flex;
+                align-items: center;
+                color: #666;
+                font-size: 14px;
+                margin-bottom: 10px;
+            }
+            
+            .team-members-count i {
+                margin-right: 8px;
+                color: #0073aa;
+            }
+            
+            .team-detail-link {
+                display: inline-block;
+                color: #0073aa;
+                text-decoration: none;
+                font-size: 14px;
+                margin-top: 10px;
+                transition: color 0.2s;
+            }
+            
+            .team-detail-link:hover {
+                color: #005a87;
+                text-decoration: underline;
+            }
+            
+            .team-detail-link i {
+                font-size: 10px;
+                margin-left: 5px;
+            }
+            
+            .add-team-card {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                border: 2px dashed #ddd;
+                background-color: #f9f9f9;
+                min-height: 200px;
+                transition: all 0.3s ease;
+            }
+            
+            .add-team-card:hover {
+                border-color: #0073aa;
+                background-color: #f0f7ff;
+            }
+            
+            .add-team-card a {
+                width: 100%;
+                height: 100%;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                justify-content: center;
+                text-decoration: none;
+                color: #666;
+                padding: 30px;
+            }
+            
+            .add-team-icon {
+                width: 60px;
+                height: 60px;
+                border-radius: 30px;
+                background-color: #e9ecef;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                margin-bottom: 15px;
+            }
+            
+            .add-team-icon i {
+                font-size: 24px;
+                color: #0073aa;
+            }
+            
+            .add-team-text {
+                font-size: 16px;
+                font-weight: 500;
+                color: #333;
+            }
+            
+            /* Alert Boxes */
+            .alert {
+                padding: 15px;
+                border-radius: 8px;
+                margin-bottom: 20px;
+                display: flex;
+                align-items: center;
+            }
+            
+            .alert i {
+                margin-right: 10px;
+                font-size: 20px;
+            }
+            
+            .alert-success {
+                background-color: #d4edda;
+                color: #155724;
+                border: 1px solid #c3e6cb;
+            }
+            
+            .alert-danger {
+                background-color: #f8d7da;
+                color: #721c24;
+                border: 1px solid #f5c6cb;
+            }
+
+            /* Organization Management Page */
+            .organization-form {
+                margin-top: 20px;
+            }
+
+            .organization-management h4 {
+                font-size: 18px;
+                margin: 30px 0 15px;
+                padding-bottom: 10px;
+                border-bottom: 1px solid #eee;
+                color: #333;
+            }
+
             /* Progress Bar Styles */
             .progress-mini {
                 height: 5px;
@@ -4087,11 +5099,136 @@ if (!$representative) {
                 text-decoration: underline;
             }
             
+            /* Button Styles */
+            .btn {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                padding: 8px 16px;
+                border-radius: 4px;
+                font-size: 14px;
+                font-weight: 500;
+                text-decoration: none;
+                cursor: pointer;
+                transition: all 0.2s;
+                border: 1px solid transparent;
+            }
+            
+            .btn i {
+                margin-right: 8px;
+                font-size: 14px;
+            }
+            
+            .btn-sm {
+                padding: 5px 10px;
+                font-size: 13px;
+            }
+            
+            .btn-primary {
+                background-color: #0073aa;
+                color: white;
+            }
+            
+            .btn-primary:hover {
+                background-color: #005c88;
+                color: white;
+            }
+            
+            .btn-secondary {
+                background-color: #6c757d;
+                color: white;
+            }
+            
+            .btn-secondary:hover {
+                background-color: #5a6268;
+                color: white;
+            }
+            
+            .btn-outline {
+                background-color: transparent;
+                border: 1px solid #ddd;
+                color: #333;
+            }
+            
+            .btn-outline:hover {
+                background-color: #f8f9fa;
+            }
+            
+            .btn-outline-warning {
+                border-color: #ffc107;
+                color: #ffc107;
+            }
+            
+            .btn-outline-warning:hover {
+                background-color: #fff3cd;
+            }
+            
+            .btn-outline-success {
+                border-color: #28a745;
+                color: #28a745;
+            }
+            
+            .btn-outline-success:hover {
+                background-color: #d4edda;
+            }
+            
+            /* Performance Distribution Chart */
+            .performance-layout {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 25px;
+            }
+            
+            .team-contribution-chart {
+                flex: 1;
+                min-width: 250px;
+            }
+            
+            .team-performance-table {
+                flex: 2;
+                min-width: 350px;
+            }
+            
+            .pie-chart {
+                width: 100%;
+                height: 300px;
+                position: relative;
+                margin-bottom: 15px;
+            }
+            
+            .pie-chart-title {
+                font-size: 14px;
+                font-weight: 600;
+                margin-top: 5px;
+                margin-bottom: 15px;
+                text-align: center;
+                color: #333;
+            }
+            
+            .performance-section {
+                margin-top: 20px;
+            }
+            
             /* Responsive Adjustments */
-            @media (max-width: 992px) {
-                .stats-grid {
+            @media (max-width: 1200px) {
+                .stats-grid,
+                .performance-stats-grid {
                     grid-template-columns: repeat(2, 1fr);
+                    gap: 15px;
                 }
+                
+                .dashboard-header-container {
+                    flex-direction: column;
+                }
+                
+                .performance-date-filter {
+                    margin-top: 15px;
+                    width: 100%;
+                    max-width: 100%;
+                }
+            }
+            
+            @media (max-width: 992px) {
                 .dashboard-grid .upper-section {
                     flex-direction: column;
                 }
@@ -4105,63 +5242,145 @@ if (!$representative) {
                 .search-box input:focus {
                     width: 200px;
                 }
+                
+                .team-cards {
+                    grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+                }
             }
             
             @media (max-width: 768px) {
                 .insurance-crm-sidenav {
                     width: 60px;
                     transform: translateX(0);
+                    overflow: visible;
                 }
+                
+                .insurance-crm-sidenav .sidenav-user {
+                    display: none;
+                }
+                
                 .insurance-crm-sidenav.expanded {
                     width: 260px;
+                    box-shadow: 0 0 15px rgba(0,0,0,0.2);
                 }
+                
+                .insurance-crm-sidenav.expanded .sidenav-user {
+                    display: flex;
+                }
+                
                 .sidenav-header h3, 
-                .user-info h4, 
-                .user-info span,
                 .sidenav-menu a span, 
                 .logout-button span,
                 .sidenav-submenu .submenu-items {
                     display: none;
                 }
+                
                 .insurance-crm-sidenav.expanded .sidenav-header h3, 
-                .insurance-crm-sidenav.expanded .user-info h4, 
-                .insurance-crm-sidenav.expanded .user-info span, 
                 .insurance-crm-sidenav.expanded .sidenav-menu a span,
                 .insurance-crm-sidenav.expanded .logout-button span {
                     display: block;
                 }
+                
                 .insurance-crm-sidenav.expanded .sidenav-submenu .submenu-items {
                     display: block;
                 }
+                
                 .insurance-crm-main {
                     margin-left: 60px;
                 }
+                
                 .insurance-crm-sidenav.expanded + .insurance-crm-main {
                     margin-left: 260px;
                 }
-                .stats-grid {
-                    grid-template-columns: repeat(1, 1fr);
+                
+                .stats-grid,
+                .performance-stats-grid {
+                    grid-template-columns: 1fr;
+                    gap: 15px;
                 }
+                
                 .hide-mobile {
+                    display: none;
+                }
+                
+                .performance-layout {
+                    flex-direction: column;
+                }
+                
+                .team-contribution-chart, 
+                .team-performance-table {
+                    flex: 1 100%;
+                }
+                
+                .org-box {
+                    width: 100%;
+                }
+                
+                .org-level {
+                    flex-direction: column;
+                    gap: 15px;
+                }
+                
+                .org-connector {
+                    height: 20px;
+                }
+                
+                .main-header {
+                    padding: 10px 15px;
+                }
+                
+                .header-left h2 {
+                    font-size: 16px;
+                }
+                
+                .search-box {
+                    display: none;
+                }
+                
+                .quick-add-btn span {
                     display: none;
                 }
             }
             
             @media (max-width: 576px) {
                 .main-content {
-                    padding: 15px;
+                    padding: 15px 10px;
                 }
-                .main-header {
-                    padding: 10px 15px;
+                
+                .date-inputs {
+                    flex-direction: column;
                 }
-                .header-left h2 {
-                    font-size: 16px;
+                
+                .card-header {
+                    flex-direction: column;
+                    align-items: flex-start;
+                    gap: 10px;
                 }
-                .quick-add-btn span {
-                    display: none;
+                
+                .card-actions {
+                    width: 100%;
+                    justify-content: space-between;
+                }
+                
+                .filter-buttons {
+                    flex-wrap: wrap;
+                }
+                
+                .filter-btn {
+                    font-size: 12px;
+                    padding: 5px 8px;
+                }
+                
+                .org-actions {
+                    flex-direction: column;
+                    gap: 10px;
+                }
+                
+                .team-cards {
+                    grid-template-columns: 1fr;
                 }
             }
-
+            
             /* Görev özetleri için stil */
             .tasks-summary-grid {
                 display: grid;
@@ -4404,58 +5623,10 @@ if (!$representative) {
                 color: #666;
                 margin-bottom: 15px;
             }
-
-            /* Ekip performans dağılımı stilleri */
-            .performance-layout {
-                display: flex;
-                flex-wrap: wrap;
-                gap: 25px;
-            }
-
-            .team-contribution-chart {
-                flex: 1;
-                min-width: 250px;
-            }
-
-            .team-performance-table {
-                flex: 2;
-                min-width: 350px;
-            }
-
-            .pie-chart {
-                width: 100%;
-                height: 300px;
-                position: relative;
-                margin-bottom: 15px;
-            }
-
-            .pie-chart-title {
-                font-size: 14px;
-                font-weight: 600;
-                margin-top: 5px;
-                margin-bottom: 15px;
-                text-align: center;
-                color: #333;
-            }
-
-            .performance-section {
-                margin-top: 20px;
-            }
             
             @media (max-width: 992px) {
                 .tasks-summary-grid {
                     grid-template-columns: repeat(2, 1fr);
-                }
-            }
-            
-            @media (max-width: 768px) {
-                .performance-layout {
-                    flex-direction: column;
-                }
-                
-                .team-contribution-chart, 
-                .team-performance-table {
-                    flex: 1 100%;
                 }
             }
             
@@ -4494,7 +5665,7 @@ if (!$representative) {
                     }
                 });
             }
-            
+
             // Quick Add Dropdown Toggle
             const quickAddToggle = document.getElementById('quick-add-toggle');
             const quickAddDropdown = document.querySelector('.quick-add-dropdown');
@@ -4588,6 +5759,25 @@ if (!$representative) {
                 });
             }
             
+            // Tarih filtresi özel tarih aralığı göster/gizle
+            const customDateToggle = document.getElementById('custom-date-toggle');
+            const customDateContainer = document.getElementById('custom-date-container');
+            
+            if (customDateToggle && customDateContainer) {
+                customDateToggle.addEventListener('click', function() {
+                    if (customDateContainer.style.display === 'none' || customDateContainer.style.display === '') {
+                        customDateContainer.style.display = 'flex';
+                        // Aktif sınıfını diğer butonlardan kaldır ve bu butona ekle
+                        document.querySelectorAll('.filter-btn').forEach(btn => {
+                            btn.classList.remove('active');
+                        });
+                        customDateToggle.classList.add('active');
+                    } else {
+                        customDateContainer.style.display = 'none';
+                    }
+                });
+            }
+            
             // Mark All Notifications as Read
             const markAllReadLink = document.querySelector('.mark-all-read');
             if (markAllReadLink) {
@@ -4631,6 +5821,31 @@ if (!$representative) {
                         e.preventDefault();
                         alert('Lütfen bir arama kriteri girin.');
                     }
+                });
+            }
+            
+            // Mobil görünüm için özel kod - avatar gizleme/gösterme
+            function adjustMobileLayout() {
+                const isMobile = window.innerWidth <= 768;
+                const sidenavExpanded = document.querySelector('.insurance-crm-sidenav').classList.contains('expanded');
+                
+                if (isMobile) {
+                    // Menü daraltıldığında avatar gizle
+                    document.querySelector('.sidenav-user').style.display = sidenavExpanded ? 'flex' : 'none';
+                } else {
+                    // Masaüstü görünümde her zaman göster
+                    document.querySelector('.sidenav-user').style.display = 'flex';
+                }
+            }
+            
+            // Sayfa yüklendiğinde ve boyut değiştiğinde düzenlemeyi uygula
+            window.addEventListener('load', adjustMobileLayout);
+            window.addEventListener('resize', adjustMobileLayout);
+            
+            // Sidebar menüsü açılıp kapandığında da uygula
+            if (sidenavToggle) {
+                sidenavToggle.addEventListener('click', function() {
+                    setTimeout(adjustMobileLayout, 10);
                 });
             }
         });
