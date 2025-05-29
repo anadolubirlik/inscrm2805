@@ -1,8 +1,8 @@
 <?php
 /**
  * Poliçe Ekleme/Düzenleme Formu
- * @version 2.5.0
- * @updated 2025-05-29
+ * @version 4.0.0
+ * @updated 2025-05-29 16:35
  */
 
 include_once(dirname(__FILE__) . '/template-colors.php');
@@ -102,34 +102,21 @@ $selected_customer_id = isset($_GET['customer_id']) ? intval($_GET['customer_id'
 // Oturum açmış temsilcinin ID'sini al
 $current_user_rep_id = function_exists('get_current_user_rep_id') ? get_current_user_rep_id() : 0;
 
-// AJAX Müşteri bilgisi alma
-if (isset($_POST['ajax_action']) && $_POST['ajax_action'] === 'get_customer_info' && isset($_POST['customer_id'])) {
-    $customer_id = intval($_POST['customer_id']);
-    $customer = $wpdb->get_row($wpdb->prepare("SELECT * FROM {$wpdb->prefix}insurance_crm_customers WHERE id = %d", $customer_id));
+// Kullanıcının patron veya müdür olup olmadığını kontrol et
+function is_patron_or_manager() {
+    $user = wp_get_current_user();
+    $user_roles = $user->roles;
+
+    // Burada tüm muhtemel "yönetici" rollerini kontrol ediyoruz
+    $management_roles = ['administrator', 'admin', 'patron', 'müdür', 'mudur', 'manager', 'insurance_manager', 'insurance_manager_admin'];
     
-    if ($customer) {
-        $response = [
-            'success' => true,
-            'data' => [
-                'id' => $customer->id,
-                'first_name' => $customer->first_name,
-                'last_name' => $customer->last_name,
-                'tc_identity' => $customer->tc_identity,
-                'phone' => $customer->phone,
-                'email' => $customer->email,
-                'address' => $customer->address
-            ]
-        ];
-    } else {
-        $response = [
-            'success' => false,
-            'message' => 'Müşteri bulunamadı.'
-        ];
+    foreach ($management_roles as $role) {
+        if (in_array($role, $user_roles)) {
+            return true;
+        }
     }
     
-    header('Content-Type: application/json');
-    echo json_encode($response);
-    exit;
+    return false;
 }
 
 if (isset($_POST['save_policy']) && isset($_POST['policy_nonce']) && wp_verify_nonce($_POST['policy_nonce'], 'save_policy')) {
@@ -142,16 +129,16 @@ if (isset($_POST['save_policy']) && isset($_POST['policy_nonce']) && wp_verify_n
         'start_date' => sanitize_text_field($_POST['start_date']),
         'end_date' => sanitize_text_field($_POST['end_date']),
         'premium_amount' => floatval($_POST['premium_amount']),
-        'payment_info' => sanitize_text_field($_POST['payment_info']),
-        'network' => sanitize_text_field($_POST['network']),
+        'payment_info' => isset($_POST['payment_info']) ? sanitize_text_field($_POST['payment_info']) : '',
+        'network' => isset($_POST['network']) ? sanitize_text_field($_POST['network']) : '',
         'status' => sanitize_text_field($_POST['status']),
-        'status_note' => sanitize_textarea_field($_POST['status_note']),
+        'status_note' => isset($_POST['status_note']) ? sanitize_textarea_field($_POST['status_note']) : '',
         'insured_party' => isset($_POST['same_as_insured']) && $_POST['same_as_insured'] === 'yes' ? '' : sanitize_text_field($_POST['insured_party']),
         'representative_id' => $current_user_rep_id // Otomatik olarak mevcut temsilci
     );
     
     // Plaka bilgisi kontrolü (Kasko/Trafik için)
-    if (in_array($policy_data['policy_type'], ['Kasko', 'Trafik']) && !empty($_POST['plate_number'])) {
+    if (in_array(strtolower($policy_data['policy_type']), ['kasko', 'trafik']) && isset($_POST['plate_number'])) {
         $policy_data['plate_number'] = sanitize_text_field($_POST['plate_number']);
     }
 
@@ -159,9 +146,8 @@ if (isset($_POST['save_policy']) && isset($_POST['policy_nonce']) && wp_verify_n
     if (isset($_POST['is_cancelled']) && $_POST['is_cancelled'] === 'yes') {
         $policy_data['cancellation_date'] = sanitize_text_field($_POST['cancellation_date']);
         $policy_data['refunded_amount'] = !empty($_POST['refunded_amount']) ? floatval($_POST['refunded_amount']) : 0;
-        // YENİ: İptal nedenini ekle
         $policy_data['cancellation_reason'] = sanitize_text_field($_POST['cancellation_reason']);
-        $policy_data['status'] = 'iptal'; // İptal edilen poliçeyi iptal olarak işaretle (YENİ: pasif değil iptal)
+        $policy_data['status'] = 'Zeyil'; // İptal edilen poliçeyi Zeyil olarak işaretle
     }
 
     if (!empty($_FILES['document']['name'])) {
@@ -197,10 +183,13 @@ if (isset($_POST['save_policy']) && isset($_POST['policy_nonce']) && wp_verify_n
     $table_name = $wpdb->prefix . 'insurance_crm_policies';
 
     if ($editing || $cancelling) {
+        // Tüm kullanıcılar için yetki kontrolü - Patron ve Müdür için her zaman izin ver
         $can_edit = true;
-        if (!current_user_can('administrator') && !current_user_can('insurance_manager')) {
+        
+        // Patron/Müdür DEĞİLSE ve kendi poliçesi değilse yetkisiz
+        if (!is_patron_or_manager()) {
             $policy_check = $wpdb->get_row($wpdb->prepare("SELECT * FROM $table_name WHERE id = %d", $policy_id));
-            if ($policy_check->representative_id != $current_user_rep_id) {
+            if ($policy_check && $policy_check->representative_id != $current_user_rep_id) {
                 $can_edit = false;
                 $message = 'Bu poliçeyi düzenleme/iptal etme yetkiniz yok.';
                 $message_type = 'error';
@@ -685,6 +674,11 @@ if ($current_user_rep_id) {
         font-weight: 600;
         letter-spacing: 1px;
     }
+
+    /* Seçilmemiş alanlar için belirginlik */
+    select:invalid, .form-select option:first-child {
+        color: #757575;
+    }
 </style>
 
 <?php if (isset($message)): ?>
@@ -741,7 +735,7 @@ if ($current_user_rep_id) {
                 <div class="form-row">
                     <p style="color: #c62828; font-weight: 500; font-size: 14px;">
                         <i class="fas fa-exclamation-triangle"></i> 
-                        Dikkat: İptal işlemi geri alınamaz. İptal edilen poliçeler sistemde kalacak ancak iptal olarak işaretlenecektir.
+                        Dikkat: İptal işlemi geri alınamaz. İptal edilen poliçeler sistemde kalacak ancak Zeyil olarak işaretlenecektir.
                     </p>
                 </div>
             </div>
@@ -786,15 +780,15 @@ if ($current_user_rep_id) {
                     </div>
                     
                     <div class="form-row">
-                        <label for="insured_party">Sigortalı Adı</label>
+                        <label for="insured_party">Sigortalayan</label>
                         <input type="text" name="insured_party" id="insured_party" class="form-input" 
                                value="<?php echo isset($policy) && !empty($policy->insured_party) ? esc_attr($policy->insured_party) : ''; ?>" 
-                               placeholder="Sigortalı farklı bir kişiyse adını girin">
+                               placeholder="Sigortalayan farklıysa lütfen isim soyisim girin">
                         
                         <div class="checkbox-row">
                             <input type="checkbox" name="same_as_insured" id="same_as_insured" value="yes" 
                                <?php echo isset($policy) && empty($policy->insured_party) ? 'checked' : ''; ?>>
-                            <label for="same_as_insured">Sigortalı müşteri ile aynı kişi</label>
+                            <label for="same_as_insured">Sigortalı ile Sigortalayan Aynı Kişi mi?</label>
                         </div>
                     </div>
                     <?php endif; ?>
@@ -814,6 +808,7 @@ if ($current_user_rep_id) {
                 <div class="form-row">
                     <label for="policy_type">Poliçe Türü <span style="color: red;">*</span></label>
                     <select name="policy_type" id="policy_type" class="form-select" required>
+                        <option value="">Seçiniz...</option>
                         <?php foreach ($policy_types as $type): ?>
                         <option value="<?php echo esc_attr($type); ?>" <?php if (isset($policy)) selected($policy->policy_type, $type); else if ($offer_type === $type) echo 'selected'; ?>>
                             <?php echo esc_html($type); ?>
@@ -825,7 +820,7 @@ if ($current_user_rep_id) {
                 
                 <!-- Plaka alanı (Kasko/Trafik için) -->
                 <div class="form-row" id="plate_field" style="display: none;">
-                    <label for="plate_number">Araç Plakası</label>
+                    <label for="plate_number">Araç Plakası <span style="color: red;">*</span></label>
                     <input type="text" name="plate_number" id="plate_number" class="form-input plate-input" 
                            value="<?php echo isset($policy) ? esc_attr($policy->plate_number) : ''; ?>"
                            placeholder="34ABC123" maxlength="10">
@@ -835,6 +830,7 @@ if ($current_user_rep_id) {
                 <div class="form-row">
                     <label for="policy_category">Poliçe Kategorisi</label>
                     <select name="policy_category" id="policy_category" class="form-select">
+                        <option value="">Seçiniz...</option>
                         <?php foreach ($policy_categories as $category): ?>
                         <option value="<?php echo esc_attr($category); ?>" <?php if (isset($policy)) selected($policy->policy_category, $category); else if ($renewing && $category === 'Yenileme') echo 'selected'; ?>>
                             <?php echo esc_html($category); ?>
@@ -846,6 +842,7 @@ if ($current_user_rep_id) {
                 <div class="form-row">
                     <label for="insurance_company">Sigorta Şirketi <span style="color: red;">*</span></label>
                     <select name="insurance_company" id="insurance_company" class="form-select" required>
+                        <option value="">Seçiniz...</option>
                         <?php foreach ($insurance_companies as $company): ?>
                         <option value="<?php echo esc_attr($company); ?>" <?php if (isset($policy)) selected($policy->insurance_company, $company); ?>>
                             <?php echo esc_html($company); ?>
@@ -909,12 +906,13 @@ if ($current_user_rep_id) {
                 <div class="form-row">
                     <label for="status">Durum</label>
                     <select name="status" id="status" class="form-select" <?php if ($cancelling) echo 'disabled'; ?>>
+                        <option value="">Seçiniz...</option>
                         <option value="aktif" <?php if (isset($policy) && $policy->status === 'aktif') echo 'selected'; ?>>Aktif</option>
                         <option value="pasif" <?php if (isset($policy) && $policy->status === 'pasif') echo 'selected'; ?>>Pasif</option>
-                        <option value="iptal" <?php if (isset($policy) && $policy->status === 'iptal') echo 'selected'; ?>>İptal</option>
+                        <option value="Zeyil" <?php if (isset($policy) && $policy->status === 'Zeyil') echo 'selected'; ?>>Zeyil</option>
                     </select>
                     <?php if ($cancelling): ?>
-                    <input type="hidden" name="status" value="iptal">
+                    <input type="hidden" name="status" value="Zeyil">
                     <?php endif; ?>
                 </div>
                 
@@ -967,11 +965,10 @@ if ($current_user_rep_id) {
                     <?php endif; ?>
                 <?php endif; ?>
             </div>
-            
         </div>
         
         <div class="form-actions">
-            <a href="?view=policies<?php echo $policy_manager->is_team_view ? '&view_type=team' : ''; ?>" class="btn btn-secondary">
+            <a href="?view=policies<?php echo isset($policy_manager) && $policy_manager->is_team_view ? '&view_type=team' : ''; ?>" class="btn btn-secondary">
                 İptal
             </a>
             
@@ -989,8 +986,24 @@ if ($current_user_rep_id) {
 </div>
 
 <script>
+// Sayfa yüklendiğinde hemen çalışacak fonksiyonlar
 document.addEventListener('DOMContentLoaded', function() {
-    // Dökümantasyon dosyası seçildiğinde etiket güncelleme
+    // Kasko/Trafik seçiminde plaka alanını göster/gizle
+    updatePlateField();
+    
+    // Sigorta şirketi ve poliçe kategorisi önceden seçili ise kontrol et
+    const policyCategory = document.getElementById('policy_category');
+    if (policyCategory && policyCategory.value === '') {
+        const firstOption = policyCategory.querySelector('option:not([value=""])');
+        if (firstOption) {
+            policyCategory.value = firstOption.value;
+        }
+    }
+    
+    // Checkbox durumunu kontrol et
+    setupInsuredCheckbox();
+    
+    // Dosya seçildiğinde etiketi güncelle
     const fileUpload = document.querySelector('input[type="file"]');
     const fileUploadLabel = document.querySelector('.file-upload-input');
     
@@ -1002,31 +1015,12 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
     
-    // Sigortalı müşteri ile aynı kişi seçeneği için
-    const sameAsInsuredCheckbox = document.getElementById('same_as_insured');
-    const insuredPartyInput = document.getElementById('insured_party');
-    
-    if (sameAsInsuredCheckbox && insuredPartyInput) {
-        sameAsInsuredCheckbox.addEventListener('change', function() {
-            insuredPartyInput.disabled = this.checked;
-            if (this.checked) {
-                insuredPartyInput.value = '';
-            }
-        });
-        
-        // Sayfa yüklendiğinde kontrol
-        if (sameAsInsuredCheckbox.checked) {
-            insuredPartyInput.disabled = true;
-        }
-    }
-    
     // İptal durumu seçildiğinde uyarı
     const statusSelect = document.getElementById('status');
-    
     if (statusSelect) {
         statusSelect.addEventListener('change', function() {
-            if (this.value === 'iptal') {
-                alert('Dikkat: İptal durumu seçtiniz. İptal işlemini yapmak için lütfen İptal Et butonunu kullanınız. Buradan yapılan değişiklikler iptal bilgilerini içermeyecektir.');
+            if (this.value === 'Zeyil') {
+                alert('Dikkat: Zeyil durumu seçtiniz. Bu işlem genellikle İptal Et butonunu kullanarak yapılmalıdır. Buradan yapılan değişiklikler iptal bilgilerini içermeyecektir.');
             }
         });
     }
@@ -1078,6 +1072,20 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
     
+    // Plaka formatı kontrolü
+    const plateInput = document.getElementById('plate_number');
+    if (plateInput) {
+        plateInput.addEventListener('input', function() {
+            this.value = this.value.toUpperCase();
+        });
+    }
+    
+    // Poliçe türü değişince plaka alanını güncelle
+    const policyType = document.getElementById('policy_type');
+    if (policyType) {
+        policyType.addEventListener('change', updatePlateField);
+    }
+    
     // Form validasyonu
     const form = document.querySelector('form');
     
@@ -1105,117 +1113,211 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
     
-    // YENİ: Müşteri seçildiğinde otomatik bilgi getirme
+    // Müşteri bilgilerini al (eğer müşteri seçilmişse)
     const customerSelect = document.getElementById('customer_id');
-    const customerDetails = document.getElementById('customer_details');
+    if (customerSelect && customerSelect.value) {
+        fetchCustomerDetails(customerSelect.value);
+    }
     
-    if (customerSelect && !customerSelect.disabled) {
+    // Müşteri değiştiğinde bilgileri yenile
+    if (customerSelect) {
         customerSelect.addEventListener('change', function() {
-            const customerId = this.value;
-            if (customerId) {
-                // Loading göster
-                customerDetails.innerHTML = '<div class="customer-loading"></div>';
-                
-                // AJAX ile müşteri bilgilerini al
-                const data = new FormData();
-                data.append('ajax_action', 'get_customer_info');
-                data.append('customer_id', customerId);
-                
-                fetch(window.location.href, {
-                    method: 'POST',
-                    body: data
-                })
-                .then(response => response.json())
-                .then(data => {
-                    if (data.success) {
-                        const customer = data.data;
-                        
-                        // Müşteri bilgilerini göster
-                        customerDetails.innerHTML = `
-                            <div class="form-row">
-                                <label>TC Kimlik No</label>
-                                <input type="text" id="customer_tc" class="form-input" value="${customer.tc_identity || ''}" readonly>
-                            </div>
-                            
-                            <div class="form-row">
-                                <label>Telefon</label>
-                                <input type="text" id="customer_phone" class="form-input" value="${customer.phone || ''}" readonly>
-                            </div>
-                            
-                            <div class="form-row">
-                                <label>E-posta</label>
-                                <input type="text" id="customer_email" class="form-input" value="${customer.email || ''}" readonly>
-                            </div>
-                            
-                            <div class="form-row">
-                                <label for="insured_party">Sigortalı Adı</label>
-                                <input type="text" name="insured_party" id="insured_party" class="form-input" 
-                                       value="" 
-                                       placeholder="Sigortalı farklı bir kişiyse adını girin">
-                                
-                                <div class="checkbox-row">
-                                    <input type="checkbox" name="same_as_insured" id="same_as_insured" value="yes" checked>
-                                    <label for="same_as_insured">Sigortalı müşteri ile aynı kişi</label>
-                                </div>
-                            </div>
-                        `;
-                        
-                        // Checkbox event listener'ı tekrar tanımla
-                        const newSameAsInsuredCheckbox = document.getElementById('same_as_insured');
-                        const newInsuredPartyInput = document.getElementById('insured_party');
-                        
-                        if (newSameAsInsuredCheckbox && newInsuredPartyInput) {
-                            newInsuredPartyInput.disabled = true;
-                            
-                            newSameAsInsuredCheckbox.addEventListener('change', function() {
-                                newInsuredPartyInput.disabled = this.checked;
-                                if (this.checked) {
-                                    newInsuredPartyInput.value = '';
-                                }
-                            });
-                        }
-                        
-                    } else {
-                        customerDetails.innerHTML = `<div class="form-row"><p style="color: #f44336;">${data.message || 'Müşteri bilgileri alınamadı.'}</p></div>`;
-                    }
-                })
-                .catch(error => {
-                    customerDetails.innerHTML = `<div class="form-row"><p style="color: #f44336;">Müşteri bilgileri alınırken bir hata oluştu.</p></div>`;
-                    console.error('Error fetching customer data:', error);
-                });
-            } else {
-                customerDetails.innerHTML = '';
-            }
-        });
-    }
-    
-    // YENİ: Kasko/Trafik poliçelerinde plaka alanı görünürlüğü
-    const policyTypeSelect = document.getElementById('policy_type');
-    const plateField = document.getElementById('plate_field');
-    
-    if (policyTypeSelect && plateField) {
-        // Sayfa yüklendiğinde kontrol
-        checkPlateVisibility();
-        
-        // Poliçe türü değiştiğinde kontrol
-        policyTypeSelect.addEventListener('change', checkPlateVisibility);
-        
-        function checkPlateVisibility() {
-            const selectedType = policyTypeSelect.value;
-            if (selectedType === 'Trafik' || selectedType === 'Kasko') {
-                plateField.style.display = 'block';
-            } else {
-                plateField.style.display = 'none';
-            }
-        }
-    }
-    
-    // Plaka formatı kontrolü
-    const plateInput = document.getElementById('plate_number');
-    if (plateInput) {
-        plateInput.addEventListener('input', function() {
-            this.value = this.value.toUpperCase();
+            fetchCustomerDetails(this.value);
         });
     }
 });
+
+// Sigortalı ile Sigortalayan Aynı Kişi mi? seçeneği için
+function setupInsuredCheckbox() {
+    const sameAsInsuredCheckbox = document.getElementById('same_as_insured');
+    const insuredPartyInput = document.getElementById('insured_party');
+    
+    if (sameAsInsuredCheckbox && insuredPartyInput) {
+        sameAsInsuredCheckbox.addEventListener('change', function() {
+            insuredPartyInput.disabled = this.checked;
+            if (this.checked) {
+                insuredPartyInput.value = '';
+            }
+        });
+        
+        // Sayfa yüklendiğinde kontrol
+        if (sameAsInsuredCheckbox.checked) {
+            insuredPartyInput.disabled = true;
+        }
+    }
+}
+
+// Müşteri detaylarını getir
+function fetchCustomerDetails(customerId) {
+    if (!customerId) return;
+    
+    // AJAX isteği için endpoint
+    const endpoint = ajaxurl || (window.location.href.split('?')[0] + '?action=get_customer_info');
+    
+    // Form verisi oluştur
+    const formData = new FormData();
+    formData.append('action', 'get_customer_info');
+    formData.append('customer_id', customerId);
+    
+    // AJAX isteği başlat
+    fetch(endpoint, {
+        method: 'POST',
+        body: formData,
+        credentials: 'same-origin'
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            updateCustomerDetails(data.data);
+        } else {
+            console.error('Müşteri bilgileri alınamadı:', data.message);
+        }
+    })
+    .catch(error => {
+        console.error('AJAX isteği başarısız oldu:', error);
+    });
+}
+
+// Müşteri bilgilerini güncelle
+function updateCustomerDetails(customer) {
+    const customerDetails = document.getElementById('customer_details');
+    if (!customerDetails) return;
+    
+    customerDetails.innerHTML = `
+        <div class="form-row">
+            <label>TC Kimlik No</label>
+            <input type="text" id="customer_tc" class="form-input" value="${customer.tc_identity || ''}" readonly>
+        </div>
+        
+        <div class="form-row">
+            <label>Telefon</label>
+            <input type="text" id="customer_phone" class="form-input" value="${customer.phone || ''}" readonly>
+        </div>
+        
+        <div class="form-row">
+            <label>E-posta</label>
+            <input type="text" id="customer_email" class="form-input" value="${customer.email || ''}" readonly>
+        </div>
+        
+        <div class="form-row">
+            <label for="insured_party">Sigortalayan</label>
+            <input type="text" name="insured_party" id="insured_party" class="form-input" 
+                   value="" 
+                   placeholder="Sigortalayan farklıysa lütfen isim soyisim girin">
+            
+            <div class="checkbox-row">
+                <input type="checkbox" name="same_as_insured" id="same_as_insured" value="yes" checked>
+                <label for="same_as_insured">Sigortalı ile Sigortalayan Aynı Kişi mi?</label>
+            </div>
+        </div>
+    `;
+    
+    // Checkbox işlevini tekrar tanımla
+    setupInsuredCheckbox();
+}
+
+// Kasko/Trafik seçiminde plaka alanını göster/gizle
+function updatePlateField() {
+    const policyTypeSelect = document.getElementById('policy_type');
+    const plateField = document.getElementById('plate_field');
+    
+    if (!policyTypeSelect || !plateField) return;
+    
+    const policyType = policyTypeSelect.value.toLowerCase();
+    const plateInput = document.getElementById('plate_number');
+    
+    // Kasko veya Trafik seçiliyse plaka alanını göster ve zorunlu yap
+    if (policyType === 'kasko' || policyType === 'trafik') {
+        plateField.style.display = 'block';
+        if (plateInput) {
+            plateInput.setAttribute('required', 'required');
+        }
+    } else {
+        // Diğer poliçe türleri için plaka alanını gizle ve zorunlu olma özelliğini kaldır
+        plateField.style.display = 'none';
+        if (plateInput) {
+            plateInput.removeAttribute('required');
+            plateInput.value = ''; // Plaka değerini temizle
+        }
+    }
+}
+
+// AJAX endpoint'i için destek
+var ajaxurl = "<?php echo admin_url('admin-ajax.php'); ?>";
+
+// Sayfa yüklendiğinde ve DOM hazır olduğunda yeniden çalıştır
+window.addEventListener('load', function() {
+    setTimeout(function() {
+        updatePlateField(); // Poliçe türüne göre plaka alanını kontrol et
+        
+        // Sigorta şirketi ve poliçe kategorisi için varsayılan değerler
+        const insuranceCompany = document.getElementById('insurance_company');
+        const policyCategory = document.getElementById('policy_category');
+        
+        // Sigorta şirketi seçili değilse ve DB'den gelen değer varsa otomatik doldur
+        <?php if (isset($policy) && !empty($policy->insurance_company)): ?>
+        if (insuranceCompany && !insuranceCompany.value) {
+            // Şirket adının tam eşleşmesini kontrol et
+            const companyOptions = Array.from(insuranceCompany.options);
+            for (let i = 0; i < companyOptions.length; i++) {
+                if (companyOptions[i].value.toLowerCase() === '<?php echo strtolower($policy->insurance_company); ?>') {
+                    insuranceCompany.selectedIndex = i;
+                    break;
+                }
+            }
+        }
+        <?php endif; ?>
+        
+        // Poliçe kategorisi seçili değilse ve DB'den gelen değer varsa otomatik doldur
+        <?php if (isset($policy) && !empty($policy->policy_category)): ?>
+        if (policyCategory && !policyCategory.value) {
+            // Kategori adının tam eşleşmesini kontrol et
+            const categoryOptions = Array.from(policyCategory.options);
+            for (let i = 0; i < categoryOptions.length; i++) {
+                if (categoryOptions[i].value.toLowerCase() === '<?php echo strtolower($policy->policy_category); ?>') {
+                    policyCategory.selectedIndex = i;
+                    break;
+                }
+            }
+        }
+        <?php endif; ?>
+    }, 100);
+});
 </script>
+
+<!-- WordPress AJAX handler için gerekli kod -->
+<?php
+add_action('wp_ajax_get_customer_info', 'get_customer_info_callback');
+function get_customer_info_callback() {
+    global $wpdb;
+    
+    // Güvenlik kontrolü (isteğe bağlı)
+    // check_ajax_referer('customer_nonce', 'nonce');
+    
+    $customer_id = isset($_POST['customer_id']) ? intval($_POST['customer_id']) : 0;
+    
+    if (!$customer_id) {
+        wp_send_json_error(['message' => 'Geçersiz müşteri ID']);
+        return;
+    }
+    
+    $customers_table = $wpdb->prefix . 'insurance_crm_customers';
+    $customer = $wpdb->get_row($wpdb->prepare("SELECT * FROM $customers_table WHERE id = %d", $customer_id));
+    
+    if (!$customer) {
+        wp_send_json_error(['message' => 'Müşteri bulunamadı']);
+        return;
+    }
+    
+    // Müşteri verilerini döndür
+    wp_send_json_success([
+        'id' => $customer->id,
+        'first_name' => $customer->first_name,
+        'last_name' => $customer->last_name,
+        'tc_identity' => $customer->tc_identity,
+        'phone' => $customer->phone,
+        'email' => $customer->email,
+        'address' => $customer->address
+    ]);
+}
+?>
