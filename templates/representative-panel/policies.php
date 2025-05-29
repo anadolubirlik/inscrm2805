@@ -1683,6 +1683,145 @@ $show_list = !in_array($current_action, ['view', 'edit', 'new', 'renew', 'cancel
                         <?php endforeach; ?>
                     </tbody>
                 </table>
+
+                <!-- Mobile Card View -->
+                <div class="policies-table-mobile">
+                    <?php foreach ($policies as $policy): 
+                        // Policy status logic (same as above)
+                        $is_cancelled = !empty($policy->cancellation_date);
+                        $is_passive = ($policy->status === 'pasif' && empty($policy->cancellation_date));
+                        $is_expired = (strtotime($policy->end_date) < time() && $policy->status === 'aktif' && !$is_cancelled);
+                        $is_expiring = (!$is_expired && !$is_passive && !$is_cancelled && 
+                                      strtotime($policy->end_date) >= time() && 
+                                      (strtotime($policy->end_date) - time()) < (30 * 24 * 60 * 60));
+                        $is_deleted = !empty($policy->is_deleted);
+
+                        $status_class = 'active';
+                        $status_text = 'Aktif';
+                        if ($is_deleted) {
+                            $status_class = 'deleted';
+                            $status_text = 'Silinmiş';
+                        } elseif ($is_cancelled) {
+                            $status_class = 'cancelled';
+                            $status_text = 'İptal';
+                        } elseif ($is_passive) {
+                            $status_class = 'passive';
+                            $status_text = 'Pasif';
+                        } elseif ($is_expired) {
+                            $status_class = 'expired';
+                            $status_text = 'Süresi Dolmuş';
+                        } elseif ($is_expiring) {
+                            $status_class = 'expiring';
+                            $status_text = 'Süresi Dolacak';
+                        }
+                    ?>
+                    <div class="policy-card">
+                        <div class="policy-card-header">
+                            <a href="<?php echo esc_url(add_query_arg(['action' => 'view', 'id' => $policy->id], remove_query_arg(['paged']))); ?>" 
+                               class="policy-number">
+                                <?php echo esc_html($policy->policy_number); ?>
+                            </a>
+                            <span class="policy-status <?php echo esc_attr($status_class); ?>">
+                                <?php echo esc_html($status_text); ?>
+                            </span>
+                        </div>
+                        
+                        <div class="policy-card-body">
+                            <div class="policy-field">
+                                <div class="policy-field-label">Müşteri</div>
+                                <div class="policy-field-value">
+                                    <?php echo esc_html($policy->customer_name); ?>
+                                </div>
+                            </div>
+                            
+                            <div class="policy-field">
+                                <div class="policy-field-label">Tür</div>
+                                <div class="policy-field-value">
+                                    <?php echo esc_html($policy->policy_type); ?>
+                                </div>
+                            </div>
+                            
+                            <div class="policy-field">
+                                <div class="policy-field-label">Şirket</div>
+                                <div class="policy-field-value">
+                                    <?php echo esc_html($policy->insurance_company); ?>
+                                </div>
+                            </div>
+                            
+                            <div class="policy-field">
+                                <div class="policy-field-label">Bitiş Tarihi</div>
+                                <div class="policy-field-value date">
+                                    <?php echo esc_html(date('d.m.Y', strtotime($policy->end_date))); ?>
+                                </div>
+                            </div>
+                            
+                            <div class="policy-field">
+                                <div class="policy-field-label">Prim</div>
+                                <div class="policy-field-value amount">
+                                    <?php echo esc_html(number_format($policy->premium_amount, 2)); ?> ₺
+                                </div>
+                            </div>
+                            
+                            <div class="policy-field">
+                                <div class="policy-field-label">Temsilci</div>
+                                <div class="policy-field-value">
+                                    <?php echo esc_html($policy->representative_name); ?>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="policy-card-actions">
+                            <div class="action-buttons-group">
+                                <button class="mobile-actions-dropdown" onclick="toggleMobileActionsMenu(this)">
+                                    <i class="fas fa-ellipsis-v"></i>
+                                    <span>İşlemler</span>
+                                </button>
+                                <div class="mobile-actions-menu">
+                                    <a href="<?php echo esc_url(add_query_arg(['action' => 'view', 'id' => $policy->id], remove_query_arg(['paged']))); ?>" 
+                                       class="mobile-action-item view">
+                                        <i class="fas fa-eye"></i>
+                                        Görüntüle
+                                    </a>
+                                    
+                                    <?php if (can_edit_policy($policy->id, $user_role_level, $current_user_rep_id)): ?>
+                                    <a href="<?php echo esc_url(add_query_arg(['action' => 'edit', 'id' => $policy->id], remove_query_arg(['paged']))); ?>" 
+                                       class="mobile-action-item edit">
+                                        <i class="fas fa-edit"></i>
+                                        Düzenle
+                                    </a>
+                                    <?php endif; ?>
+                                    
+                                    <?php if ($policy_manager->isShowDeletedMode() && $user_role_level <= 2): ?>
+                                    <a href="<?php echo esc_url(add_query_arg(['action' => 'restore', 'id' => $policy->id], remove_query_arg(['paged']))); ?>" 
+                                       class="mobile-action-item restore"
+                                       onclick="return confirm('Bu poliçeyi geri getirmek istediğinizden emin misiniz?')">
+                                        <i class="fas fa-undo"></i>
+                                        Geri Getir
+                                    </a>
+                                    <button class="mobile-action-item view view-delete-details"
+                                            data-id="<?php echo esc_attr($policy->id); ?>"
+                                            data-policy="<?php echo esc_attr($policy->policy_number); ?>"
+                                            data-date="<?php echo esc_attr(date('d.m.Y H:i', strtotime($policy->deleted_at))); ?>"
+                                            data-user="<?php echo esc_attr($policy->deleted_by_name); ?>">
+                                        <i class="fas fa-info-circle"></i>
+                                        Silme Detayı
+                                    </button>
+                                    <?php else: ?>
+                                    <?php if (can_delete_policy($policy->id, $user_role_level, $current_user_rep_id)): ?>
+                                    <a href="<?php echo esc_url(wp_nonce_url(add_query_arg(['action' => 'delete', 'id' => $policy->id], remove_query_arg(['paged'])), 'delete_policy_' . $policy->id)); ?>" 
+                                       class="mobile-action-item delete"
+                                       onclick="return confirm('Bu poliçeyi silmek istediğinizden emin misiniz? Bu işlem geri alınamaz.')">
+                                        <i class="fas fa-trash"></i>
+                                        Sil
+                                    </a>
+                                    <?php endif; ?>
+                                    <?php endif; ?>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <?php endforeach; ?>
+                </div>
             </div>
             <?php if ($total_pages > 1): ?>
             <div class="pagination-wrapper">
@@ -3090,6 +3229,215 @@ $show_list = !in_array($current_action, ['view', 'edit', 'new', 'renew', 'cancel
     font-size: var(--font-size-base);
 }
 
+/* Mobile Table Card View Styles */
+.policies-table-mobile {
+    display: none;
+}
+
+.policy-card {
+    background: var(--surface);
+    border-radius: var(--radius-lg);
+    margin-bottom: var(--spacing-md);
+    padding: var(--spacing-md);
+    box-shadow: var(--shadow-sm);
+    border: 1px solid var(--outline-variant);
+    transition: all var(--transition-fast);
+    position: relative;
+}
+
+.policy-card:hover {
+    box-shadow: var(--shadow-md);
+    transform: translateY(-1px);
+}
+
+.policy-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: var(--spacing-sm);
+    padding-bottom: var(--spacing-sm);
+    border-bottom: 1px solid var(--outline-variant);
+}
+
+.policy-number {
+    font-size: var(--font-size-lg);
+    font-weight: 600;
+    color: var(--primary);
+    text-decoration: none;
+}
+
+.policy-number:hover {
+    color: var(--primary-dark);
+    text-decoration: underline;
+}
+
+.policy-status {
+    font-size: var(--font-size-sm);
+    padding: var(--spacing-xs) var(--spacing-sm);
+    border-radius: var(--radius-lg);
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.policy-status.active {
+    background: #e8f5e9;
+    color: #2e7d32;
+}
+
+.policy-status.passive {
+    background: #f5f5f5;
+    color: #757575;
+}
+
+.policy-status.cancelled {
+    background: #ffebee;
+    color: #d32f2f;
+}
+
+.policy-card-body {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--spacing-sm);
+    margin-bottom: var(--spacing-md);
+}
+
+.policy-field {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.policy-field-label {
+    font-size: var(--font-size-xs);
+    color: var(--on-surface-variant);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.policy-field-value {
+    font-size: var(--font-size-sm);
+    color: var(--on-surface);
+    font-weight: 500;
+    word-break: break-word;
+}
+
+.policy-field-value.amount {
+    color: var(--success);
+    font-weight: 600;
+}
+
+.policy-field-value.date {
+    font-family: 'Courier New', monospace;
+    font-size: var(--font-size-xs);
+}
+
+.policy-card-actions {
+    display: flex;
+    gap: var(--spacing-xs);
+    justify-content: flex-end;
+    padding-top: var(--spacing-sm);
+    border-top: 1px solid var(--outline-variant);
+    position: relative;
+}
+
+/* Mobile Actions Dropdown */
+.mobile-actions-dropdown {
+    background: var(--primary);
+    color: white;
+    padding: var(--spacing-sm) var(--spacing-md);
+    border-radius: var(--radius-lg);
+    border: none;
+    font-size: var(--font-size-sm);
+    font-weight: 500;
+    min-height: 44px;
+    min-width: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--spacing-xs);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    position: relative;
+}
+
+.mobile-actions-dropdown:hover {
+    background: var(--primary-dark);
+    transform: translateY(-1px);
+}
+
+.mobile-actions-dropdown:active {
+    transform: translateY(0);
+}
+
+.mobile-actions-menu {
+    position: absolute;
+    top: 100%;
+    right: 0;
+    background: var(--surface);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-lg);
+    border: 1px solid var(--outline-variant);
+    min-width: 200px;
+    z-index: 100;
+    padding: var(--spacing-sm) 0;
+    display: none;
+    margin-top: var(--spacing-xs);
+}
+
+.mobile-actions-menu.show {
+    display: block;
+    animation: slideIn var(--transition-fast);
+}
+
+.mobile-action-item {
+    display: block;
+    padding: var(--spacing-md) var(--spacing-lg);
+    color: var(--on-surface);
+    text-decoration: none;
+    font-size: var(--font-size-sm);
+    font-weight: 500;
+    border-bottom: 1px solid var(--outline-variant);
+    transition: background-color var(--transition-fast);
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+}
+
+.mobile-action-item:last-child {
+    border-bottom: none;
+}
+
+.mobile-action-item:hover {
+    background: var(--surface-variant);
+    color: var(--on-surface);
+    text-decoration: none;
+}
+
+.mobile-action-item.edit {
+    color: var(--primary);
+}
+
+.mobile-action-item.view {
+    color: var(--info);
+}
+
+.mobile-action-item.delete {
+    color: var(--danger);
+}
+
+.mobile-action-item.restore {
+    color: var(--success);
+}
+
+.mobile-action-item i {
+    width: 16px;
+    text-align: center;
+    font-size: var(--font-size-sm);
+}
+
 /* Responsive Design */
 @media (max-width: 1024px) {
     .action-buttons-group {
@@ -3109,88 +3457,478 @@ $show_list = !in_array($current_action, ['view', 'edit', 'new', 'renew', 'cancel
 
 @media (max-width: 768px) {
     .modern-crm-container {
-        padding: var(--spacing-md);
+        padding: var(--spacing-sm);
     }
 
+    /* Header Responsive */
     .header-content {
         flex-direction: column;
         align-items: stretch;
+        gap: var(--spacing-md);
     }
 
     .header-actions {
         justify-content: space-between;
+        flex-wrap: wrap;
+        gap: var(--spacing-sm);
     }
 
+    .view-toggle {
+        order: -1;
+        width: 100%;
+    }
+
+    .view-btn {
+        flex: 1;
+        justify-content: center;
+        padding: var(--spacing-md);
+        font-size: var(--font-size-base);
+        min-height: 44px;
+    }
+
+    /* Filter System - Accordion Style */
     .filters-grid {
         grid-template-columns: 1fr;
+        gap: var(--spacing-md);
     }
 
+    .filter-group {
+        background: var(--surface-variant);
+        padding: var(--spacing-md);
+        border-radius: var(--radius-lg);
+        border: 1px solid var(--outline-variant);
+    }
+
+    .filter-group label {
+        font-size: var(--font-size-base);
+        font-weight: 600;
+        margin-bottom: var(--spacing-sm);
+    }
+
+    .form-input,
+    .form-select {
+        min-height: 44px;
+        font-size: var(--font-size-base);
+        padding: var(--spacing-md) var(--spacing-lg);
+    }
+
+    /* Statistics Cards - 2x2 Grid */
     .stats-cards {
-        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        grid-template-columns: repeat(2, 1fr);
+        gap: var(--spacing-sm);
     }
 
+    .stat-card {
+        padding: var(--spacing-md);
+        min-height: 120px;
+    }
+
+    .stat-icon {
+        width: 48px;
+        height: 48px;
+        font-size: var(--font-size-lg);
+    }
+
+    .stat-value {
+        font-size: var(--font-size-lg);
+    }
+
+    /* Chart Grid */
     .chart-grid {
         grid-template-columns: 1fr;
     }
 
+    /* Table - Convert to Card View */
     .table-container {
-        margin: 0 calc(-1 * var(--spacing-md));
+        margin: 0 calc(-1 * var(--spacing-sm));
+        overflow: visible;
     }
 
+    .table-header-scroll {
+        display: none;
+    }
+
+    .policies-table {
+        display: none;
+    }
+
+    .policies-table-mobile {
+        display: block;
+    }
+
+    .policy-card {
+        background: var(--surface);
+        border-radius: var(--radius-lg);
+        margin-bottom: var(--spacing-md);
+        padding: var(--spacing-md);
+        box-shadow: var(--shadow-sm);
+        border: 1px solid var(--outline-variant);
+        transition: all var(--transition-fast);
+    }
+
+    .policy-card:hover {
+        box-shadow: var(--shadow-md);
+        transform: translateY(-1px);
+    }
+
+    .policy-card-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        margin-bottom: var(--spacing-sm);
+        padding-bottom: var(--spacing-sm);
+        border-bottom: 1px solid var(--outline-variant);
+    }
+
+    .policy-number {
+        font-size: var(--font-size-lg);
+        font-weight: 600;
+        color: var(--primary);
+    }
+
+    .policy-status {
+        font-size: var(--font-size-sm);
+        padding: var(--spacing-xs) var(--spacing-sm);
+        border-radius: var(--radius-lg);
+        font-weight: 500;
+    }
+
+    .policy-card-body {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: var(--spacing-sm);
+        margin-bottom: var(--spacing-md);
+    }
+
+    .policy-field {
+        display: flex;
+        flex-direction: column;
+    }
+
+    .policy-field-label {
+        font-size: var(--font-size-xs);
+        color: var(--on-surface-variant);
+        margin-bottom: 2px;
+        font-weight: 500;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+
+    .policy-field-value {
+        font-size: var(--font-size-sm);
+        color: var(--on-surface);
+        font-weight: 500;
+    }
+
+    .policy-card-actions {
+        display: flex;
+        gap: var(--spacing-xs);
+        justify-content: flex-end;
+        padding-top: var(--spacing-sm);
+        border-top: 1px solid var(--outline-variant);
+    }
+
+    /* Mobile Action Buttons - Dropdown Style */
+    .action-buttons-group {
+        position: relative;
+    }
+
+    .mobile-actions-dropdown {
+        background: var(--primary);
+        color: white;
+        padding: var(--spacing-sm) var(--spacing-md);
+        border-radius: var(--radius-lg);
+        border: none;
+        font-size: var(--font-size-sm);
+        font-weight: 500;
+        min-height: 44px;
+        min-width: 44px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: var(--spacing-xs);
+        cursor: pointer;
+        transition: all var(--transition-fast);
+    }
+
+    .mobile-actions-dropdown:hover {
+        background: var(--primary-dark);
+        transform: translateY(-1px);
+    }
+
+    .mobile-actions-menu {
+        position: absolute;
+        top: 100%;
+        right: 0;
+        background: var(--surface);
+        border-radius: var(--radius-lg);
+        box-shadow: var(--shadow-lg);
+        border: 1px solid var(--outline-variant);
+        min-width: 180px;
+        z-index: 10;
+        padding: var(--spacing-sm) 0;
+        display: none;
+    }
+
+    .mobile-actions-menu.show {
+        display: block;
+        animation: slideIn var(--transition-fast);
+    }
+
+    .mobile-action-item {
+        display: block;
+        padding: var(--spacing-md) var(--spacing-lg);
+        color: var(--on-surface);
+        text-decoration: none;
+        font-size: var(--font-size-sm);
+        font-weight: 500;
+        border-bottom: 1px solid var(--outline-variant);
+        transition: background-color var(--transition-fast);
+        min-height: 44px;
+        display: flex;
+        align-items: center;
+        gap: var(--spacing-sm);
+    }
+
+    .mobile-action-item:last-child {
+        border-bottom: none;
+    }
+
+    .mobile-action-item:hover {
+        background: var(--surface-variant);
+    }
+
+    .mobile-action-item i {
+        width: 16px;
+        text-align: center;
+    }
+
+    /* Touch-friendly buttons */
+    .btn {
+        min-height: 44px;
+        min-width: 44px;
+        padding: var(--spacing-md) var(--spacing-lg);
+        font-size: var(--font-size-base);
+    }
+
+    .btn-xs {
+        min-height: 40px;
+        min-width: 40px;
+        padding: var(--spacing-sm) var(--spacing-md);
+        font-size: var(--font-size-sm);
+    }
+
+    .btn-sm {
+        min-height: 42px;
+        min-width: 42px;
+        padding: var(--spacing-sm) var(--spacing-lg);
+    }
+
+    /* Table Info */
     .table-info {
         flex-direction: column;
         align-items: flex-start;
         gap: var(--spacing-sm);
+        padding: var(--spacing-md);
+        background: var(--surface-variant);
+        border-radius: var(--radius-lg);
+        margin-bottom: var(--spacing-md);
     }
 
-    .policies-table th:nth-child(n+6),
-    .policies-table td:nth-child(n+6) {
-        display: none;
+    .table-info-text {
+        font-size: var(--font-size-base);
     }
 
-    .policies-table th:nth-child(4),
-    .policies-table td:nth-child(4),
-    .policies-table th:nth-child(9),
-    .policies-table td:nth-child(9),
-    .policies-table th:nth-child(10),
-    .policies-table td:nth-child(10) {
-        display: none;
-    }
-    
-    .action-buttons-group {
-        flex-direction: row;
-        flex-wrap: wrap;
-        gap: 2px;
-    }
-    
-    .btn-xs {
-        padding: 2px 4px;
-        font-size: 0.65rem;
-    }
-    
+    /* Deleted Policies Banner */
     .deleted-policies-banner {
         flex-direction: column;
         text-align: center;
         padding: var(--spacing-md);
+        gap: var(--spacing-md);
     }
     
     .banner-actions {
-        margin-top: var(--spacing-md);
+        margin-top: 0;
     }
 }
 
 @media (max-width: 480px) {
-    .stat-card {
-        flex-direction: column;
-        text-align: center;
+    .modern-crm-container {
+        padding: var(--spacing-xs);
     }
 
+    /* Single column statistics cards */
+    .stats-cards {
+        grid-template-columns: 1fr;
+    }
+
+    .stat-card {
+        flex-direction: row;
+        text-align: left;
+        padding: var(--spacing-md);
+        min-height: 80px;
+    }
+
+    .stat-icon {
+        width: 40px;
+        height: 40px;
+        font-size: var(--font-size-base);
+    }
+
+    /* Policy cards single column layout */
+    .policy-card-body {
+        grid-template-columns: 1fr;
+        gap: var(--spacing-sm);
+    }
+
+    /* Header simplification */
+    .page-title h1 {
+        font-size: var(--font-size-xl);
+    }
+
+    .version-badge,
+    .role-badge {
+        font-size: var(--font-size-xs);
+        padding: var(--spacing-xs) var(--spacing-sm);
+    }
+
+    /* Filter controls */
+    .filter-controls {
+        flex-direction: column;
+        width: 100%;
+        gap: var(--spacing-sm);
+    }
+
+    .filter-controls .btn {
+        width: 100%;
+        justify-content: center;
+    }
+
+    /* Full-screen modals */
+    .policy-modal {
+        padding: 0 !important;
+        align-items: flex-start !important;
+    }
+
+    .modal-content {
+        width: 100vw !important;
+        height: 100vh !important;
+        max-width: none !important;
+        max-height: none !important;
+        margin: 0 !important;
+        border-radius: 0 !important;
+        display: flex;
+        flex-direction: column;
+    }
+
+    .modal-header {
+        padding: var(--spacing-lg);
+        border-bottom: 2px solid var(--outline-variant);
+        flex-shrink: 0;
+        position: relative;
+    }
+
+    .modal-header h3 {
+        font-size: var(--font-size-xl);
+        margin: 0;
+        padding-right: var(--spacing-xl);
+    }
+
+    .close-modal {
+        position: absolute;
+        top: 50%;
+        right: var(--spacing-lg);
+        transform: translateY(-50%);
+        width: 44px;
+        height: 44px;
+        background: var(--danger);
+        color: white;
+        border: none;
+        border-radius: 50%;
+        font-size: var(--font-size-xl);
+        font-weight: bold;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        box-shadow: var(--shadow-md);
+        transition: all var(--transition-fast);
+    }
+
+    .close-modal:hover {
+        background: #c62828;
+        transform: translateY(-50%) scale(1.1);
+    }
+
+    .modal-body {
+        flex: 1;
+        overflow-y: auto;
+        padding: var(--spacing-lg);
+    }
+
+    .modal-footer {
+        padding: var(--spacing-lg);
+        border-top: 2px solid var(--outline-variant);
+        flex-shrink: 0;
+        display: flex;
+        gap: var(--spacing-md);
+        justify-content: stretch;
+    }
+
+    .modal-footer .btn {
+        flex: 1;
+        min-height: 50px;
+        font-size: var(--font-size-base);
+        font-weight: 600;
+    }
+
+    /* Action buttons mobile optimization */
     .action-buttons-group {
-        justify-content: flex-start;
+        justify-content: center;
+        width: 100%;
     }
     
-    .actions-column {
-        width: 100px;
+    .mobile-actions-dropdown {
+        width: 100%;
+        min-height: 48px;
+    }
+
+    /* Mobile action menu positioning */
+    .mobile-actions-menu {
+        right: auto;
+        left: 0;
+        width: 100%;
+        max-width: 280px;
+        margin: 0 auto;
+    }
+
+    /* Touch targets optimization */
+    .btn, .mobile-action-item {
+        min-height: 48px;
+        font-size: var(--font-size-base);
+    }
+
+    .form-input, .form-select {
+        min-height: 48px;
+        font-size: 16px; /* Prevents zoom on iOS */
+    }
+
+    /* Navigation improvements */
+    .view-toggle {
+        gap: 0;
+    }
+
+    .view-btn {
+        border-radius: 0;
+        min-height: 50px;
+    }
+
+    .view-btn:first-child {
+        border-radius: var(--radius-lg) 0 0 var(--radius-lg);
+    }
+
+    .view-btn:last-child {
+        border-radius: 0 var(--radius-lg) var(--radius-lg) 0;
     }
 }
 
@@ -4378,6 +5116,37 @@ function updatePerPage(newPerPage) {
     url.searchParams.set('per_page', newPerPage);
     url.searchParams.delete('paged'); // Reset to first page
     window.location.href = url.toString();
+}
+
+// MOBILE ACTIONS DROPDOWN FUNCTION
+function toggleMobileActionsMenu(button) {
+    const menu = button.nextElementSibling;
+    const isOpen = menu.classList.contains('show');
+    
+    // Close all other open menus
+    document.querySelectorAll('.mobile-actions-menu.show').forEach(openMenu => {
+        if (openMenu !== menu) {
+            openMenu.classList.remove('show');
+        }
+    });
+    
+    // Toggle current menu
+    if (isOpen) {
+        menu.classList.remove('show');
+    } else {
+        menu.classList.add('show');
+    }
+    
+    // Close menu when clicking outside
+    setTimeout(() => {
+        const handleClickOutside = (event) => {
+            if (!button.contains(event.target) && !menu.contains(event.target)) {
+                menu.classList.remove('show');
+                document.removeEventListener('click', handleClickOutside);
+            }
+        };
+        document.addEventListener('click', handleClickOutside);
+    }, 0);
 }
 
 // Çift yönlü kaydırma çubuğu senkronizasyonu
